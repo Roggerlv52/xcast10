@@ -1,0 +1,293 @@
+package com.rogger.xcast10;
+
+import android.content.Context;
+import android.net.wifi.WifiManager;
+import android.util.Log;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.HttpURLConnection;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
+import java.net.SocketTimeoutException;
+import java.net.URL;
+import java.util.Collections;
+
+public class DLNAManager {
+
+    private static final String TAG = "DLNAManager";
+    private static final String SSDP_IP = "239.255.255.250";
+    private static final int SSDP_PORT = 1900;
+
+    // =========================================================
+    // CALLBACK
+    // =========================================================
+
+    public interface DiscoveryCallback {
+        void onDeviceFound(DLNADevice device);
+        void onFinished(String msg);
+    }
+
+    // =========================================================
+    // DESCOBERTA SSDP
+    // =========================================================
+
+    public static void discoverDevices(Context context, DiscoveryCallback callback) {
+
+        new Thread(() -> {
+            try {
+
+                WifiManager wifi = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+
+                WifiManager.MulticastLock lock = wifi.createMulticastLock("ssdp");
+                lock.setReferenceCounted(true);
+                lock.acquire();
+
+                DatagramSocket socket = new DatagramSocket(null);
+                socket.setReuseAddress(true);
+                socket.bind(new InetSocketAddress(1901));
+                socket.setSoTimeout(3000);
+
+                String query = "M-SEARCH * HTTP/1.1\r\n" + "HOST: 239.255.255.250:1900\r\n"
+                        + "MAN: \"ssdp:discover\"\r\n" + "MX: 3\r\n"
+                        + "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n";
+
+                DatagramPacket packet = new DatagramPacket(query.getBytes(), query.length(),
+                        InetAddress.getByName("239.255.255.250"), 1900);
+
+                socket.send(packet);
+
+                byte[] buf = new byte[2048];
+
+                while (true) {
+                    try {
+                        DatagramPacket resp = new DatagramPacket(buf, buf.length);
+                        socket.receive(resp);
+
+                        String response = new String(resp.getData(), 0, resp.getLength());
+                        Log.d("SSDP", response);
+
+                        String location = parseHeader(response, "LOCATION");
+                        if (location != null)
+                            fetchDeviceDetails(location, callback);
+                    } catch (SocketTimeoutException e) {
+                        break;
+                    }
+                }
+
+                socket.close();
+                lock.release();
+
+                callback.onFinished("Nenhuma Smart TV encontrada na rede");
+
+            } catch (Exception e) {
+                Log.e(TAG, "Erro SSDP", e);
+                callback.onFinished("Nenhuma Smart TV encontrada na rede");
+            }
+        }).start();
+    }
+
+    // =========================================================
+    // DETALHES DO DEVICE
+    // =========================================================
+
+    private static void fetchDeviceDetails(String location, DiscoveryCallback callback) {
+
+        new Thread(() -> {
+            try {
+                URL url = new URL(location);
+
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(4000);
+                conn.setReadTimeout(4000);
+
+                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+
+                StringBuilder xml = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null)
+                    xml.append(line);
+
+                reader.close();
+
+                String content = xml.toString();
+
+                String name = extract(content, "<friendlyName>", "</friendlyName>");
+                if (name == null)
+                    name = "Smart TV";
+
+                String avTransport = extractServiceUrl(content, "AVTransport:1");
+                String rendering = extractServiceUrl(content, "RenderingControl:1");
+                Log.d("DLNA_XML", "Location: " + location + " Content: " + content);
+                if (avTransport != null) {
+
+                    String base = url.getProtocol() + "://" + url.getHost()
+                            + (url.getPort() != -1 ? ":" + url.getPort() : "");
+
+                    if (!avTransport.startsWith("/"))
+                        avTransport = "/" + avTransport;
+
+                    if (rendering != null && !rendering.startsWith("/"))
+                        rendering = "/" + rendering;
+
+                    DLNADevice d = new DLNADevice(name, location);
+
+                    d.setServiceUrl(base + avTransport);
+
+                    if (rendering != null)
+                        d.setRenderingControlUrl(base + rendering);
+
+                    if (!content.contains("AVTransport:1")) {
+                        Log.d(TAG, "Dispositivo ignorado: não é MediaRenderer");
+                        return;
+                    }
+                    callback.onDeviceFound(d);
+                    Log.d(TAG, "Device encontrado: " + name);
+                }
+
+            } catch (Exception e) {
+                Log.e(TAG, "Erro lendo device", e);
+            }
+        }).start();
+    }
+
+    // =========================================================
+    // PARSERS
+    // =========================================================
+
+    private static String extract(String xml, String start, String end) {
+        if (!xml.contains(start))
+            return null;
+        return xml.substring(xml.indexOf(start) + start.length(), xml.indexOf(end));
+    }
+
+    private static String extractServiceUrl(String xml, String service) {
+        if (!xml.contains(service))
+            return null;
+        String sub = xml.substring(xml.indexOf(service));
+        return extract(sub, "<controlURL>", "</controlURL>");
+    }
+
+    private static String parseHeader(String response, String header) {
+        for (String line : response.split("\r\n")) {
+            if (line.toLowerCase().startsWith(header.toLowerCase() + ":"))
+                return line.substring(header.length() + 1).trim();
+        }
+        return null;
+    }
+
+    // =========================================================
+    // COMANDOS AVTRANSPORT PRONTOS
+    // =========================================================
+
+    public static void setAVTransportURI(String url, String videoUrl) {
+
+        String meta = "<CurrentURI>" + videoUrl + "</CurrentURI>" + "<CurrentURIMetaData>"
+                + "&lt;DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
+                + "xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" "
+                + "xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\"&gt;" +
+
+                "&lt;item id=\"0\" parentID=\"0\" restricted=\"0\"&gt;" + "&lt;dc:title&gt;Video&lt;/dc:title&gt;"
+                + "&lt;upnp:class&gt;object.item.videoItem&lt;/upnp:class&gt;"
+                + "&lt;res protocolInfo=\"http-get:*:video/mp4:*\"&gt;" + videoUrl + "&lt;/res&gt;" + "&lt;/item&gt;" +
+
+                "&lt;/DIDL-Lite&gt;" + "</CurrentURIMetaData>";
+
+        sendCommand(url, "SetAVTransportURI", meta);
+    }
+
+    public static void play(String url) {
+
+        sendCommand(url, "Play", "<Speed>1</Speed>");
+    }
+
+    public static void pause(String url) {
+        sendCommand(url, "Pause", "");
+    }
+
+    public static void stop(String url) {
+        sendCommand(url, "Stop", "");
+    }
+
+    public static void seek(String url, String time) {
+        String args = "<Unit>REL_TIME</Unit>" + "<Target>" + time + "</Target>";
+
+        sendCommand(url, "Seek", args);
+    }
+
+    // =========================================================
+    // COMANDOS GENÉRICOS
+    // =========================================================
+
+    public static void sendCommand(String url, String action, String args) {
+        sendSoap(url, "urn:schemas-upnp-org:service:AVTransport:1", action, args);
+    }
+
+    public static void sendRenderingCommand(String url, String action, String args) {
+        sendSoap(url, "urn:schemas-upnp-org:service:RenderingControl:1", action, args);
+    }
+
+    // =========================================================
+    // SOAP CORE
+    // =========================================================
+
+    private static void sendSoap(String url, String service, String action, String args) {
+
+        new Thread(() -> {
+            try {
+                Log.d(TAG, "SOAP " + action + " -> " + url);
+
+                HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(3000);
+                conn.setReadTimeout(3000);
+
+                conn.setRequestProperty("Content-Type", "text/xml; charset=\"utf-8\"");
+                conn.setRequestProperty("SOAPACTION", "\"" + service + "#" + action + "\"");
+                conn.setDoOutput(true);
+
+                String xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                        + "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
+                        + "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">" + "<s:Body>" + "<u:" + action
+                        + " xmlns:u=\"" + service + "\">" + "<InstanceID>0</InstanceID>" + args + "</u:" + action + ">"
+                        + "</s:Body>" + "</s:Envelope>";
+
+                OutputStream os = conn.getOutputStream();
+                os.write(xml.getBytes());
+                os.flush();
+                os.close();
+
+                int code = conn.getResponseCode();
+                Log.d(TAG, "Resposta " + action + " = " + code);
+
+                conn.disconnect();
+
+            } catch (Exception e) {
+                Log.e(TAG, "Erro SOAP " + action, e);
+            }
+        }).start();
+    }
+
+    // =========================================================
+    // IP LOCAL
+    // =========================================================
+
+    public static String getLocalIpAddress() {
+        try {
+            for (NetworkInterface intf : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                for (InetAddress addr : Collections.list(intf.getInetAddresses())) {
+                    if (!addr.isLoopbackAddress() && addr instanceof Inet4Address)
+                        return addr.getHostAddress();
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return "127.0.0.1";
+    }
+}

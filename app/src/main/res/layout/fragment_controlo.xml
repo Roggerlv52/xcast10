@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="20dp"
+    android:gravity="center">
+
+    <TextView
+        android:id="@+id/tvVideoTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Transmitindo Vídeo..."
+        android:textSize="20sp"
+        android:layout_marginBottom="40dp"/>
+
+    <SeekBar
+        android:id="@+id/videoSeekBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="10dp"
+        android:max="100"/>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginBottom="30dp">
+
+        <Button
+            android:id="@+id/btnVolumeDown"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Vol -"
+            android:layout_marginEnd="10dp"/>
+
+        <Button
+            android:id="@+id/btnPausePlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Pausar"
+            android:layout_marginEnd="10dp"/>
+
+        <Button
+            android:id="@+id/btnVolumeUp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Vol +"/>
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/btnCancel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Parar Transmissão"
+        android:backgroundTint="#F44336"
+        android:textColor="#FFFFFF"/>
+
+</LinearLayout>
