@@ -1,5 +1,9 @@
 package com.rogger.xcast10;
 
+/**
+ * Representa um dispositivo DLNA (Digital Living Network Alliance) encontrado na rede.
+ * Armazena informações essenciais como o nome, URL de descrição e URLs de controlo de serviço.
+ */
 public class DLNADevice {
     private String name;
     private String location; // URL do XML de descrição do dispositivo

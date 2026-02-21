@@ -18,6 +18,10 @@ import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.util.Collections;
 
+/**
+ * Gestor responsável pela descoberta de dispositivos DLNA na rede local via protocolo SSDP.
+ * Gere a lista de dispositivos disponíveis e as interações de rede para controlo de media via SOAP.
+ */
 public class DLNAManager {
 
     private static final String TAG = "DLNAManager";

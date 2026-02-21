@@ -12,6 +12,11 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.util.Map;
 
+/**
+ * Servidor HTTP local baseado no NanoHTTPD.
+ * Serve o ficheiro de vídeo do smartphone para que a Smart TV o possa descarregar e reproduzir via rede.
+ * Suporta pedidos de "Range" para permitir avançar/retroceder o vídeo na TV.
+ */
 public class LocalHttpServer extends NanoHTTPD {
 
     private static final String TAG = "LocalHttpService";

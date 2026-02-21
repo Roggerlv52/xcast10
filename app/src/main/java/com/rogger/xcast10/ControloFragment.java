@@ -12,6 +12,10 @@ import androidx.navigation.fragment.NavHostFragment;
 
 import com.rogger.xcast10.databinding.FragmentControloBinding;
 
+/**
+ * Fragmento responsável pela interface de controlo da reprodução de vídeo na TV.
+ * Permite ao utilizador pausar, reproduzir, ajustar o volume e controlar o progresso do vídeo.
+ */
 public class ControloFragment extends Fragment {
     private String deviceUrl;
     private boolean isPlaying = true;

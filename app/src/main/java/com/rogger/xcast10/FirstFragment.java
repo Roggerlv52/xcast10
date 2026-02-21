@@ -24,6 +24,10 @@ import com.rogger.xcast10.databinding.FragmentFirstBinding;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Primeiro fragmento da aplicação, responsável pela listagem e seleção de dispositivos
+ * ou vídeos para iniciar a transmissão. Gere a descoberta de dispositivos e o início do streaming.
+ */
 public class FirstFragment extends Fragment {
     private final List<DLNADevice> devices = new ArrayList<>();
     private DLNADevice selectedDevice;

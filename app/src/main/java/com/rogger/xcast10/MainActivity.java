@@ -18,6 +18,11 @@ import com.rogger.xcast10.databinding.ActivityMainBinding;
 import android.view.Menu;
 import android.view.MenuItem;
 
+/**
+ * Atividade principal da aplicação.
+ * Configura a barra de ferramentas (Toolbar), a navegação entre fragmentos e a interface base do utilizador.
+ * Serve como contentor para o FirstFragment e o ControloFragment.
+ */
 public class MainActivity extends AppCompatActivity {
 
     private AppBarConfiguration appBarConfiguration;
