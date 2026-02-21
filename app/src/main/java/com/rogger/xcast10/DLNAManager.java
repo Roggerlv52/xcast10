@@ -28,6 +28,17 @@ public class DLNAManager {
     private static final String SSDP_IP = "239.255.255.250";
     private static final int SSDP_PORT = 1900;
 
+    // Campo estático para persistir o dispositivo selecionado durante a sessão do app
+    private static DLNADevice selectedDevice;
+
+    public static DLNADevice getSelectedDevice() {
+        return selectedDevice;
+    }
+
+    public static void setSelectedDevice(DLNADevice device) {
+        selectedDevice = device;
+    }
+
     // =========================================================
     // CALLBACK
     // =========================================================

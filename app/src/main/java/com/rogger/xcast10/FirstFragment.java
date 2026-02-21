@@ -30,7 +30,6 @@ import java.util.List;
  */
 public class FirstFragment extends Fragment {
     private final List<DLNADevice> devices = new ArrayList<>();
-    private DLNADevice selectedDevice;
     private LocalHttpServer httpServer;
 
     private FragmentFirstBinding binding;
@@ -50,6 +49,13 @@ public class FirstFragment extends Fragment {
         super.onViewCreated(view, savedInstanceState);
 
         checkPermissions();
+
+        // Verificar se já existe um dispositivo selecionado anteriormente
+        DLNADevice savedDevice = DLNAManager.getSelectedDevice();
+        if (savedDevice != null) {
+            binding.tvStatus.setText("Conectado a: " + savedDevice.getName());
+            binding.btnSelectVideo.setEnabled(true);
+        }
 
         binding.btnFindDevices.setOnClickListener(v -> startDiscovery());
         binding.btnSelectVideo.setOnClickListener(v -> pickVideo());
@@ -100,8 +106,9 @@ public class FirstFragment extends Fragment {
             builder.setTitle("Selecione a Smart TV");
             ArrayAdapter<DLNADevice> adapter = new ArrayAdapter<>(requireContext(), android.R.layout.simple_list_item_1, devices);
             builder.setAdapter(adapter, (dialog, which) -> {
-                selectedDevice = devices.get(which);
-                binding.tvStatus.setText("Conectado a: " + selectedDevice);
+                DLNADevice selected = devices.get(which);
+                DLNAManager.setSelectedDevice(selected); // Salva o dispositivo no DLNAManager
+                binding.tvStatus.setText("Conectado a: " + selected.getName());
                 binding.btnSelectVideo.setEnabled(true);
 
             });
@@ -123,6 +130,12 @@ public class FirstFragment extends Fragment {
     }
 
     private void startStreaming(Uri videoUri) {
+        DLNADevice selectedDevice = DLNAManager.getSelectedDevice();
+        if (selectedDevice == null) {
+            Toast.makeText(requireContext(), "Por favor, selecione um dispositivo primeiro", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         binding.progressBar.setVisibility(View.VISIBLE);
 
         // Iniciar servidor local
