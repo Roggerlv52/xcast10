@@ -38,10 +38,15 @@ public class ControloFragment extends Fragment {
 
         deviceUrl = getArguments().getString("deviceUrl");
         if (deviceUrl != null) {
-            binding.btnCancel.setOnClickListener(v ->
-                    NavHostFragment.findNavController(ControloFragment.this)
-                            .navigate(R.id.action_SecondFragment_to_FirstFragment)
-            );
+            binding.btnCancel.setOnClickListener(v -> {
+                // Enviar comando Stop para a TV antes de sair
+                DLNAManager.stop(deviceUrl);
+                
+                // Voltar para o ecrã inicial
+                NavHostFragment.findNavController(ControloFragment.this)
+                        .navigate(R.id.action_SecondFragment_to_FirstFragment);
+            });
+            
             binding.btnPausePlay.setOnClickListener(v -> {
                 if (isPlaying) {
                     DLNAManager.sendCommand(deviceUrl, "Pause", "");
