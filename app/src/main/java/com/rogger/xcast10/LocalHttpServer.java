@@ -2,7 +2,9 @@ package com.rogger.xcast10;
 
 import android.content.Context;
 import android.net.Uri;
+import android.net.wifi.WifiManager;
 import android.os.ParcelFileDescriptor;
+import android.os.PowerManager;
 import android.util.Log;
 import android.webkit.MimeTypeMap;
 
@@ -16,6 +18,7 @@ import java.util.Map;
  * Servidor HTTP local baseado no NanoHTTPD.
  * Serve o ficheiro de vídeo do smartphone para que a Smart TV o possa descarregar e reproduzir via rede.
  * Suporta pedidos de "Range" para permitir avançar/retroceder o vídeo na TV.
+ * Implementa WakeLock e WifiLock para evitar interrupções quando o ecrã se apaga.
  */
 public class LocalHttpServer extends NanoHTTPD {
 
@@ -23,10 +26,59 @@ public class LocalHttpServer extends NanoHTTPD {
 
     private Context context;
     private Uri videoUri;
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
 
     public LocalHttpServer(Context context, int port) {
         super(port);
         this.context = context;
+        initLocks();
+    }
+
+    private void initLocks() {
+        PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        if (powerManager != null) {
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Xcast10:StreamingWakeLock");
+        }
+
+        WifiManager wifiManager = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wifiManager != null) {
+            wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Xcast10:StreamingWifiLock");
+        }
+    }
+
+    @Override
+    public void start() throws java.io.IOException {
+        super.start();
+        acquireLocks();
+    }
+
+    @Override
+    public void stop() {
+        super.stop();
+        releaseLocks();
+    }
+
+    private void acquireLocks() {
+        if (wakeLock != null && !wakeLock.isHeld()) {
+            wakeLock.acquire();
+            Log.d(TAG, "WakeLock adquirido");
+        }
+        if (wifiLock != null && !wifiLock.isHeld()) {
+            wifiLock.acquire();
+            Log.d(TAG, "WifiLock adquirido");
+        }
+    }
+
+    private void releaseLocks() {
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+            Log.d(TAG, "WakeLock libertado");
+        }
+        if (wifiLock != null && wifiLock.isHeld()) {
+            wifiLock.release();
+            Log.d(TAG, "WifiLock libertado");
+        }
     }
 
     public void setVideoUri(Uri uri) {
