@@ -1,10 +1,15 @@
 package com.rogger.xcast10;
 
 import android.Manifest;
+import android.content.ContentUris;
+import android.database.Cursor;
+import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.MediaStore;
 import android.util.Log;
+import android.util.Size;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -23,6 +28,7 @@ import com.rogger.xcast10.databinding.FragmentFirstBinding;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Primeiro fragmento da aplicação, responsável pela listagem e seleção de dispositivos
@@ -58,7 +64,7 @@ public class FirstFragment extends Fragment {
         }
 
         binding.btnFindDevices.setOnClickListener(v -> startDiscovery());
-        binding.btnSelectVideo.setOnClickListener(v -> pickVideo());
+        binding.btnSelectVideo.setOnClickListener(v -> showVideoSelectionDialog());
     }
 
     private void checkPermissions() {
@@ -116,17 +122,79 @@ public class FirstFragment extends Fragment {
         builder.show();
     }
 
-    private final ActivityResultLauncher<String> videoPickerLauncher = registerForActivityResult(
-            new ActivityResultContracts.GetContent(),
-            uri -> {
-                if (uri != null) {
-                    startStreaming(uri);
-                }
-            }
-    );
+    /**
+     * Busca os vídeos locais do dispositivo e exibe um diálogo com títulos e miniaturas.
+     */
+    private void showVideoSelectionDialog() {
+        List<VideoItem> videoList = new ArrayList<>();
+        String[] projection = new String[]{
+                MediaStore.Video.Media._ID,
+                MediaStore.Video.Media.DISPLAY_NAME,
+                MediaStore.Video.Media.DURATION
+        };
 
-    private void pickVideo() {
-        videoPickerLauncher.launch("video/*");
+        try (Cursor cursor = requireContext().getContentResolver().query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                null,
+                null,
+                MediaStore.Video.Media.DATE_ADDED + " DESC"
+        )) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID);
+                int nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME);
+                int durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION);
+
+                do {
+                    long id = cursor.getLong(idColumn);
+                    String name = cursor.getString(nameColumn);
+                    long duration = cursor.getLong(durationColumn);
+                    Uri contentUri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
+
+                    Bitmap thumbnail = null;
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            thumbnail = requireContext().getContentResolver().loadThumbnail(contentUri, new Size(120, 80), null);
+                        } else {
+                            thumbnail = MediaStore.Video.Thumbnails.getThumbnail(requireContext().getContentResolver(), id, MediaStore.Video.Thumbnails.MINI_KIND, null);
+                        }
+                    } catch (Exception e) {
+                        Log.e("VideoThumb", "Erro ao carregar miniatura", e);
+                    }
+
+                    String durationStr = formatDuration(duration);
+                    videoList.add(new VideoItem(name, contentUri, thumbnail, durationStr));
+                } while (cursor.moveToNext());
+            }
+        } catch (Exception e) {
+            Log.e("VideoList", "Erro ao buscar vídeos", e);
+        }
+
+        if (videoList.isEmpty()) {
+            Toast.makeText(requireContext(), "Nenhum vídeo encontrado no dispositivo", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(requireContext());
+        builder.setTitle("Selecione um Vídeo");
+        VideoAdapter adapter = new VideoAdapter(requireContext(), videoList);
+        builder.setAdapter(adapter, (dialog, which) -> {
+            VideoItem selectedVideo = videoList.get(which);
+            startStreaming(selectedVideo.getUri());
+        });
+        builder.show();
+    }
+
+    private String formatDuration(long durationMs) {
+        long seconds = durationMs / 1000;
+        long h = seconds / 3600;
+        long m = (seconds % 3600) / 60;
+        long s = seconds % 60;
+        if (h > 0) {
+            return String.format(Locale.getDefault(), "%02d:%02d:%02d", h, m, s);
+        } else {
+            return String.format(Locale.getDefault(), "%02d:%02d", m, s);
+        }
     }
 
     private void startStreaming(Uri videoUri) {
