@@ -228,6 +228,7 @@ public class FirstFragment extends Fragment {
 
                 Bundle bundle = new Bundle();
                 bundle.putString("deviceUrl", selectedDevice.getServiceUrl());
+                bundle.putString("renderingControlUrl", selectedDevice.getRenderingControlUrl());
                 bundle.putString("videoTitle", videoTitle);
                 bundle.putLong("durationMs", durationMs);
                 NavHostFragment.findNavController(FirstFragment.this)

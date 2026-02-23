@@ -5,6 +5,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.SeekBar;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.fragment.app.Fragment;
@@ -19,10 +20,11 @@ import com.rogger.xcast10.databinding.FragmentControloBinding;
  */
 public class ControloFragment extends Fragment {
     private String deviceUrl;
+    private String renderingControlUrl;
     private String videoTitle;
     private long durationMs;
     private boolean isPlaying = true;
-    private int currentVolume = 50;
+    private int currentVolume = 30; // Volume inicial padrão
     private FragmentControloBinding binding;
 
     @Override
@@ -41,6 +43,7 @@ public class ControloFragment extends Fragment {
 
         if (getArguments() != null) {
             deviceUrl = getArguments().getString("deviceUrl");
+            renderingControlUrl = getArguments().getString("renderingControlUrl");
             videoTitle = getArguments().getString("videoTitle");
             durationMs = getArguments().getLong("durationMs", 0);
         }
@@ -75,20 +78,20 @@ public class ControloFragment extends Fragment {
                 isPlaying = !isPlaying;
             });
 
+            // Configuração de Volume
             binding.btnVolumeUp.setOnClickListener(v -> {
-                currentVolume = Math.min(50, currentVolume + 5);
-                DLNAManager.sendCommand(deviceUrl, "SetVolume", "<Channel>Master</Channel><DesiredVolume>" + currentVolume + "</DesiredVolume>");
+                currentVolume = Math.min(100, currentVolume + 5);
+                updateVolume();
             });
 
             binding.btnVolumeDown.setOnClickListener(v -> {
                 currentVolume = Math.max(0, currentVolume - 5);
-                DLNAManager.sendCommand(deviceUrl, "SetVolume", "<Channel>Master</Channel><DesiredVolume>" + currentVolume + "</DesiredVolume>");
+                updateVolume();
             });
 
             binding.videoSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
                 public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                    // Opcional: atualizar um TextView com o tempo atual enquanto arrasta
                 }
 
                 @Override
@@ -97,13 +100,23 @@ public class ControloFragment extends Fragment {
 
                 @Override
                 public void onStopTrackingTouch(SeekBar seekBar) {
-                    // Quando o utilizador solta o SeekBar, envia o comando Seek para a TV
                     int progress = seekBar.getProgress();
                     String targetTime = formatTime(progress);
                     DLNAManager.seek(deviceUrl, targetTime);
                 }
             });
         }
+    }
+
+    private void updateVolume() {
+        String targetUrl = (renderingControlUrl != null) ? renderingControlUrl : deviceUrl;
+        String args = "<Channel>Master</Channel><DesiredVolume>" + currentVolume + "</DesiredVolume>";
+        
+        // Envia o comando para o serviço de RenderingControl
+        DLNAManager.sendRenderingCommand(targetUrl, "SetVolume", args);
+        
+        // Feedback visual para o utilizador
+        Toast.makeText(requireContext(), "Volume: " + currentVolume + "%", Toast.LENGTH_SHORT).show();
     }
 
     private String formatTime(int seconds) {
