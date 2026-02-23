@@ -15,11 +15,12 @@ import com.rogger.xcast10.databinding.FragmentControloBinding;
 /**
  * Fragmento responsável pela interface de controlo da reprodução de vídeo na TV.
  * Permite ao utilizador pausar, reproduzir, ajustar o volume e controlar o progresso do vídeo.
- * Exibe o título do vídeo que está a ser transmitido.
+ * Exibe o título do vídeo que está a ser transmitido e permite avançar/retroceder.
  */
 public class ControloFragment extends Fragment {
     private String deviceUrl;
     private String videoTitle;
+    private long durationMs;
     private boolean isPlaying = true;
     private int currentVolume = 50;
     private FragmentControloBinding binding;
@@ -41,10 +42,16 @@ public class ControloFragment extends Fragment {
         if (getArguments() != null) {
             deviceUrl = getArguments().getString("deviceUrl");
             videoTitle = getArguments().getString("videoTitle");
+            durationMs = getArguments().getLong("durationMs", 0);
         }
 
         if (videoTitle != null) {
             binding.tvVideoTitle.setText(videoTitle);
+        }
+
+        // Configurar o SeekBar com a duração real (em segundos)
+        if (durationMs > 0) {
+            binding.videoSeekBar.setMax((int) (durationMs / 1000));
         }
 
         if (deviceUrl != null) {
@@ -81,11 +88,7 @@ public class ControloFragment extends Fragment {
             binding.videoSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
                 public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                    if (fromUser) {
-                        // Converter progresso para tempo (exemplo simplificado: progresso é % de 1 hora)
-                        String targetTime = formatTime(progress * 36);
-                        DLNAManager.sendCommand(deviceUrl, "Seek", "<Unit>REL_TIME</Unit><Target>" + targetTime + "</Target>");
-                    }
+                    // Opcional: atualizar um TextView com o tempo atual enquanto arrasta
                 }
 
                 @Override
@@ -94,6 +97,10 @@ public class ControloFragment extends Fragment {
 
                 @Override
                 public void onStopTrackingTouch(SeekBar seekBar) {
+                    // Quando o utilizador solta o SeekBar, envia o comando Seek para a TV
+                    int progress = seekBar.getProgress();
+                    String targetTime = formatTime(progress);
+                    DLNAManager.seek(deviceUrl, targetTime);
                 }
             });
         }

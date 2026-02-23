@@ -163,7 +163,7 @@ public class FirstFragment extends Fragment {
                     }
 
                     String durationStr = formatDuration(duration);
-                    videoList.add(new VideoItem(name, contentUri, thumbnail, durationStr));
+                    videoList.add(new VideoItem(name, contentUri, thumbnail, durationStr, duration));
                 } while (cursor.moveToNext());
             }
         } catch (Exception e) {
@@ -180,7 +180,7 @@ public class FirstFragment extends Fragment {
         VideoAdapter adapter = new VideoAdapter(requireContext(), videoList);
         builder.setAdapter(adapter, (dialog, which) -> {
             VideoItem selectedVideo = videoList.get(which);
-            startStreaming(selectedVideo.getUri(), selectedVideo.getTitle());
+            startStreaming(selectedVideo.getUri(), selectedVideo.getTitle(), selectedVideo.getDurationMs());
         });
         builder.show();
     }
@@ -197,7 +197,7 @@ public class FirstFragment extends Fragment {
         }
     }
 
-    private void startStreaming(Uri videoUri, String videoTitle) {
+    private void startStreaming(Uri videoUri, String videoTitle, long durationMs) {
         DLNADevice selectedDevice = DLNAManager.getSelectedDevice();
         if (selectedDevice == null) {
             Toast.makeText(requireContext(), "Por favor, selecione um dispositivo primeiro", Toast.LENGTH_SHORT).show();
@@ -229,6 +229,7 @@ public class FirstFragment extends Fragment {
                 Bundle bundle = new Bundle();
                 bundle.putString("deviceUrl", selectedDevice.getServiceUrl());
                 bundle.putString("videoTitle", videoTitle);
+                bundle.putLong("durationMs", durationMs);
                 NavHostFragment.findNavController(FirstFragment.this)
                         .navigate(R.id.action_FirstFragment_to_SecondFragment, bundle);
 

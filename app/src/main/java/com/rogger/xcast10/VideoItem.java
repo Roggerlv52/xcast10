@@ -4,19 +4,21 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 
 /**
- * Representa um vídeo local com título, miniatura e URI.
+ * Representa um vídeo local com título, miniatura, URI e duração.
  */
 public class VideoItem {
     private final String title;
     private final Uri uri;
     private final Bitmap thumbnail;
     private final String duration;
+    private final long durationMs;
 
-    public VideoItem(String title, Uri uri, Bitmap thumbnail, String duration) {
+    public VideoItem(String title, Uri uri, Bitmap thumbnail, String duration, long durationMs) {
         this.title = title;
         this.uri = uri;
         this.thumbnail = thumbnail;
         this.duration = duration;
+        this.durationMs = durationMs;
     }
 
     public String getTitle() {
@@ -33,5 +35,9 @@ public class VideoItem {
 
     public String getDuration() {
         return duration;
+    }
+
+    public long getDurationMs() {
+        return durationMs;
     }
 }
