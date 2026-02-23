@@ -180,7 +180,7 @@ public class FirstFragment extends Fragment {
         VideoAdapter adapter = new VideoAdapter(requireContext(), videoList);
         builder.setAdapter(adapter, (dialog, which) -> {
             VideoItem selectedVideo = videoList.get(which);
-            startStreaming(selectedVideo.getUri());
+            startStreaming(selectedVideo.getUri(), selectedVideo.getTitle());
         });
         builder.show();
     }
@@ -197,7 +197,7 @@ public class FirstFragment extends Fragment {
         }
     }
 
-    private void startStreaming(Uri videoUri) {
+    private void startStreaming(Uri videoUri, String videoTitle) {
         DLNADevice selectedDevice = DLNAManager.getSelectedDevice();
         if (selectedDevice == null) {
             Toast.makeText(requireContext(), "Por favor, selecione um dispositivo primeiro", Toast.LENGTH_SHORT).show();
@@ -228,6 +228,7 @@ public class FirstFragment extends Fragment {
 
                 Bundle bundle = new Bundle();
                 bundle.putString("deviceUrl", selectedDevice.getServiceUrl());
+                bundle.putString("videoTitle", videoTitle);
                 NavHostFragment.findNavController(FirstFragment.this)
                         .navigate(R.id.action_FirstFragment_to_SecondFragment, bundle);
 

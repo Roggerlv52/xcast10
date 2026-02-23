@@ -15,9 +15,11 @@ import com.rogger.xcast10.databinding.FragmentControloBinding;
 /**
  * Fragmento responsável pela interface de controlo da reprodução de vídeo na TV.
  * Permite ao utilizador pausar, reproduzir, ajustar o volume e controlar o progresso do vídeo.
+ * Exibe o título do vídeo que está a ser transmitido.
  */
 public class ControloFragment extends Fragment {
     private String deviceUrl;
+    private String videoTitle;
     private boolean isPlaying = true;
     private int currentVolume = 50;
     private FragmentControloBinding binding;
@@ -36,7 +38,15 @@ public class ControloFragment extends Fragment {
     public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        deviceUrl = getArguments().getString("deviceUrl");
+        if (getArguments() != null) {
+            deviceUrl = getArguments().getString("deviceUrl");
+            videoTitle = getArguments().getString("videoTitle");
+        }
+
+        if (videoTitle != null) {
+            binding.tvVideoTitle.setText(videoTitle);
+        }
+
         if (deviceUrl != null) {
             binding.btnCancel.setOnClickListener(v -> {
                 // Enviar comando Stop para a TV antes de sair

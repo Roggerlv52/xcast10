@@ -3,22 +3,35 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="20dp"
+    android:padding="24dp"
     android:gravity="center">
 
     <TextView
         android:id="@+id/tvVideoTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Título do Vídeo"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:textColor="#000000"
+        android:gravity="center"
+        android:layout_marginBottom="16dp"
+        android:ellipsize="end"
+        android:maxLines="2"/>
+
+    <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Transmitindo Vídeo..."
-        android:textSize="20sp"
+        android:text="Transmitindo para a Smart TV"
+        android:textSize="14sp"
+        android:textColor="#666666"
         android:layout_marginBottom="40dp"/>
 
     <SeekBar
         android:id="@+id/videoSeekBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="10dp"
+        android:layout_marginBottom="16dp"
         android:max="100"/>
 
     <LinearLayout
@@ -26,21 +39,21 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center"
-        android:layout_marginBottom="30dp">
+        android:layout_marginBottom="32dp">
 
         <Button
             android:id="@+id/btnVolumeDown"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Vol -"
-            android:layout_marginEnd="10dp"/>
+            android:layout_marginEnd="8dp"/>
 
         <Button
             android:id="@+id/btnPausePlay"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Pausar"
-            android:layout_marginEnd="10dp"/>
+            android:layout_marginEnd="8dp"/>
 
         <Button
             android:id="@+id/btnVolumeUp"
@@ -53,8 +66,10 @@
         android:id="@+id/btnCancel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Parar Transmissão"
+        android:text="Encerrar Transmissão"
         android:backgroundTint="#F44336"
-        android:textColor="#FFFFFF"/>
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:padding="12dp"/>
 
 </LinearLayout>
