@@ -13,6 +13,12 @@
         <argument
             android:name="deviceUrl"
             app:argType="string" />
+        <argument
+            android:name="videoTitle"
+            app:argType="string" />
+        <argument
+            android:name="durationMs"
+            app:argType="string" />
 
         <action
             android:id="@+id/action_FirstFragment_to_SecondFragment"

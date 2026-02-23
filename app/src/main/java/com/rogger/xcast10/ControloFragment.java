@@ -1,6 +1,7 @@
 package com.rogger.xcast10;
 
 import android.os.Bundle;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -69,10 +70,10 @@ public class ControloFragment extends Fragment {
             
             binding.btnPausePlay.setOnClickListener(v -> {
                 if (isPlaying) {
-                    DLNAManager.sendCommand(deviceUrl, "Pause", "");
+                    DLNAManager.pause(deviceUrl);
                     binding.btnPausePlay.setText("Reproduzir");
                 } else {
-                    DLNAManager.sendCommand(deviceUrl, "Play", "<Speed>1</Speed>");
+                    DLNAManager.play(deviceUrl);
                     binding.btnPausePlay.setText("Pausar");
                 }
                 isPlaying = !isPlaying;
@@ -102,7 +103,14 @@ public class ControloFragment extends Fragment {
                 public void onStopTrackingTouch(SeekBar seekBar) {
                     int progress = seekBar.getProgress();
                     String targetTime = formatTime(progress);
+                    
+                    // Envia o comando Seek melhorado
                     DLNAManager.seek(deviceUrl, targetTime);
+
+                    // Garante que o estado visual do botão Play/Pause está correto,
+                    // já que o DLNAManager.seek força o Play no final.
+                    isPlaying = true;
+                    binding.btnPausePlay.setText("Pausar");
                 }
             });
         }

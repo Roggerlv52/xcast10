@@ -39,12 +39,9 @@ public class DLNAManager {
         selectedDevice = device;
     }
 
-    // =========================================================
-    // CALLBACK
-    // =========================================================
-
     public interface DiscoveryCallback {
         void onDeviceFound(DLNADevice device);
+
         void onFinished(String msg);
     }
 
@@ -229,10 +226,29 @@ public class DLNAManager {
         sendCommand(url, "Stop", "");
     }
 
+    /**
+     * Envia o comando Seek para a TV.
+     * Algumas TVs exigem que o vídeo seja pausado antes de realizar o Seek para evitar o erro "função não disponível".
+     */
     public static void seek(String url, String time) {
-        String args = "<Unit>REL_TIME</Unit>" + "<Target>" + time + "</Target>";
+        new Thread(() -> {
+            try {
+                // 1. Pausa o vídeo antes de realizar o seek (melhora compatibilidade)
+                pause(url);
+                Thread.sleep(200); // Pequeno delay para a TV processar a pausa
 
-        sendCommand(url, "Seek", args);
+                // 2. Envia o comando Seek
+                String args = "<Unit>REL_TIME</Unit>" + "<Target>" + time + "</Target>";
+                sendSoapSync(url, "urn:schemas-upnp-org:service:AVTransport:1", "Seek", args);
+
+                Thread.sleep(200); // Pequeno delay para a TV processar o seek
+
+                // 3. Retoma a reprodução
+                play(url);
+            } catch (Exception e) {
+                Log.e(TAG, "Erro no processo de Seek", e);
+            }
+        }).start();
     }
 
     // =========================================================
@@ -252,41 +268,45 @@ public class DLNAManager {
     // =========================================================
 
     private static void sendSoap(String url, String service, String action, String args) {
+        new Thread(() -> sendSoapSync(url, service, action, args)).start();
+    }
 
-        new Thread(() -> {
-            try {
-                Log.d(TAG, "SOAP " + action + " -> " + url);
+    /**
+     * Versão síncrona do envio SOAP para permitir sequenciamento de comandos (como no Seek).
+     */
+    private static void sendSoapSync(String url, String service, String action, String args) {
+        try {
+            Log.d(TAG, "SOAP " + action + " -> " + url);
 
-                HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
 
-                conn.setRequestMethod("POST");
-                conn.setConnectTimeout(3000);
-                conn.setReadTimeout(3000);
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(3000);
 
-                conn.setRequestProperty("Content-Type", "text/xml; charset=\"utf-8\"");
-                conn.setRequestProperty("SOAPACTION", "\"" + service + "#" + action + "\"");
-                conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "text/xml; charset=\"utf-8\"");
+            conn.setRequestProperty("SOAPACTION", "\"" + service + "#" + action + "\"");
+            conn.setDoOutput(true);
 
-                String xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-                        + "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
-                        + "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">" + "<s:Body>" + "<u:" + action
-                        + " xmlns:u=\"" + service + "\">" + "<InstanceID>0</InstanceID>" + args + "</u:" + action + ">"
-                        + "</s:Body>" + "</s:Envelope>";
+            String xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                    + "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
+                    + "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">" + "<s:Body>" + "<u:" + action
+                    + " xmlns:u=\"" + service + "\">" + "<InstanceID>0</InstanceID>" + args + "</u:" + action + ">"
+                    + "</s:Body>" + "</s:Envelope>";
 
-                OutputStream os = conn.getOutputStream();
-                os.write(xml.getBytes());
-                os.flush();
-                os.close();
+            OutputStream os = conn.getOutputStream();
+            os.write(xml.getBytes());
+            os.flush();
+            os.close();
 
-                int code = conn.getResponseCode();
-                Log.d(TAG, "Resposta " + action + " = " + code);
+            int code = conn.getResponseCode();
+            Log.d(TAG, "Resposta " + action + " = " + code);
 
-                conn.disconnect();
+            conn.disconnect();
 
-            } catch (Exception e) {
-                Log.e(TAG, "Erro SOAP " + action, e);
-            }
-        }).start();
+        } catch (Exception e) {
+            Log.e(TAG, "Erro SOAP " + action, e);
+        }
     }
 
     // =========================================================

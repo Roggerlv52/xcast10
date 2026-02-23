@@ -37,7 +37,7 @@ import java.util.Locale;
 public class FirstFragment extends Fragment {
     private final List<DLNADevice> devices = new ArrayList<>();
     private LocalHttpServer httpServer;
-
+    private  VideoItem itemVideo;
     private FragmentFirstBinding binding;
 
     @Override
@@ -179,8 +179,8 @@ public class FirstFragment extends Fragment {
         builder.setTitle("Selecione um Vídeo");
         VideoAdapter adapter = new VideoAdapter(requireContext(), videoList);
         builder.setAdapter(adapter, (dialog, which) -> {
-            VideoItem selectedVideo = videoList.get(which);
-            startStreaming(selectedVideo.getUri());
+            itemVideo = videoList.get(which);
+            startStreaming(itemVideo.getUri());
         });
         builder.show();
     }
@@ -228,6 +228,8 @@ public class FirstFragment extends Fragment {
 
                 Bundle bundle = new Bundle();
                 bundle.putString("deviceUrl", selectedDevice.getServiceUrl());
+                bundle.putString("videoTitle",itemVideo.getTitle());
+                bundle.putString("durationMs",itemVideo.getDuration());
                 NavHostFragment.findNavController(FirstFragment.this)
                         .navigate(R.id.action_FirstFragment_to_SecondFragment, bundle);
 
