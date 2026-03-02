@@ -1,26 +1,19 @@
 package com.rogger.xcast10;
 
-import android.Manifest;
-import android.content.ContentUris;
+import android.app.AlertDialog;
+import android.content.ContentResolver;
+import android.content.Context;
 import android.database.Cursor;
-import android.graphics.Bitmap;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.util.Log;
-import android.util.Size;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ArrayAdapter;
 import android.widget.Toast;
 
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
-import androidx.appcompat.app.AlertDialog;
-import androidx.core.app.ActivityCompat;
 import androidx.fragment.app.Fragment;
 import androidx.navigation.fragment.NavHostFragment;
 
@@ -28,17 +21,17 @@ import com.rogger.xcast10.databinding.FragmentFirstBinding;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 /**
- * Primeiro fragmento da aplicação, responsável pela listagem e seleção de dispositivos
- * ou vídeos para iniciar a transmissão. Gere a descoberta de dispositivos e o início do streaming.
+ * Fragmento inicial do aplicativo.
+ * Responsável por descobrir Smart TVs na rede, listar vídeos locais do dispositivo
+ * e iniciar o servidor HTTP para streaming.
  */
 public class FirstFragment extends Fragment {
-    private final List<DLNADevice> devices = new ArrayList<>();
-    private LocalHttpServer httpServer;
 
     private FragmentFirstBinding binding;
+    private DLNADevice selectedDevice;
+    private LocalHttpServer server;
 
     @Override
     public View onCreateView(
@@ -54,191 +47,142 @@ public class FirstFragment extends Fragment {
     public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        checkPermissions();
-
-        // Verificar se já existe um dispositivo selecionado anteriormente
-        DLNADevice savedDevice = DLNAManager.getSelectedDevice();
-        if (savedDevice != null) {
-            binding.tvStatus.setText("Conectado a: " + savedDevice.getName());
+        // Tenta recuperar o dispositivo guardado anteriormente no DLNAManager
+        selectedDevice = DLNAManager.getSelectedDevice();
+        if (selectedDevice != null) {
+            binding.tvStatus.setText("TV Conectada: " + selectedDevice.getName());
             binding.btnSelectVideo.setEnabled(true);
         }
 
-        binding.btnFindDevices.setOnClickListener(v -> startDiscovery());
-        binding.btnSelectVideo.setOnClickListener(v -> showVideoSelectionDialog());
-    }
+        binding.btnDiscover.setOnClickListener(v -> {
+            binding.tvStatus.setText("Buscando Smart TVs...");
+            DLNAManager.discoverDevices(requireContext(), new DLNAManager.DiscoveryCallback() {
+                @Override
+                public void onDeviceFound(DLNADevice device) {
+                    getActivity().runOnUiThread(() -> {
+                        selectedDevice = device;
+                        // Guarda o dispositivo selecionado para persistência
+                        DLNAManager.setSelectedDevice(device);
+                        binding.tvStatus.setText("TV Encontrada: " + device.getName());
+                        binding.btnSelectVideo.setEnabled(true);
+                        Toast.makeText(getContext(), "Conectado a " + device.getName(), Toast.LENGTH_SHORT).show();
+                    });
+                }
 
-    private void checkPermissions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ActivityCompat.requestPermissions(requireActivity(), new String[]{Manifest.permission.READ_MEDIA_VIDEO}, 1);
-        } else {
-            ActivityCompat.requestPermissions(requireActivity(), new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, 1);
-        }
-    }
+                @Override
+                public void onFinished(String msg) {
+                    getActivity().runOnUiThread(() -> {
+                        if (selectedDevice == null) {
+                            binding.tvStatus.setText(msg);
+                        }
+                    });
+                }
+            });
+        });
 
-    private void startDiscovery() {
-        devices.clear();
-        binding.progressBar.setVisibility(View.VISIBLE);
-
-        DLNAManager.discoverDevices(requireContext(), new DLNAManager.DiscoveryCallback() {
-
-            @Override
-            public void onDeviceFound(DLNADevice device) {
-                binding.getRoot().post(() -> {
-                    for (DLNADevice d : devices)
-                        if (d.getServiceUrl().equals(device.getServiceUrl()))
-                            return;
-                    devices.add(device);
-                    Log.d("Devais", device.getName());
-                });
+        binding.btnSelectVideo.setOnClickListener(v -> {
+            if (selectedDevice == null) {
+                Toast.makeText(getContext(), "Selecione uma TV primeiro", Toast.LENGTH_SHORT).show();
+                return;
             }
-
-            @Override
-            public void onFinished(String msg) {
-                binding.getRoot().post(() -> {
-                    binding.progressBar.setVisibility(View.GONE);
-                    showDeviceDialog(msg); // agora abre só 1 vez
-                });
-            }
+            showVideoSelectionDialog();
         });
     }
 
-    private void showDeviceDialog(String msg) {
-        binding.progressBar.setVisibility(View.GONE);
-        AlertDialog.Builder builder = new AlertDialog.Builder(requireContext());
-        if (devices.isEmpty()) {
-            builder.setTitle(msg);
-            builder.setMessage("Verifique se a TV está na mesma rede \uD83D\uDCE1 ou reinicie a sua TV \uD83D\uDD04.");
-        } else {
-            builder.setTitle("Selecione a Smart TV");
-            ArrayAdapter<DLNADevice> adapter = new ArrayAdapter<>(requireContext(), android.R.layout.simple_list_item_1, devices);
-            builder.setAdapter(adapter, (dialog, which) -> {
-                DLNADevice selected = devices.get(which);
-                DLNAManager.setSelectedDevice(selected); // Salva o dispositivo no DLNAManager
-                binding.tvStatus.setText("Conectado a: " + selected.getName());
-                binding.btnSelectVideo.setEnabled(true);
-
-            });
-        }
-        builder.show();
-    }
-
     /**
-     * Busca os vídeos locais do dispositivo e exibe um diálogo com títulos e miniaturas.
+     * Exibe um diálogo com a lista de vídeos locais encontrados no dispositivo.
      */
     private void showVideoSelectionDialog() {
-        List<VideoItem> videoList = new ArrayList<>();
-        String[] projection = new String[]{
-                MediaStore.Video.Media._ID,
-                MediaStore.Video.Media.DISPLAY_NAME,
-                MediaStore.Video.Media.DURATION
-        };
-
-        try (Cursor cursor = requireContext().getContentResolver().query(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                projection,
-                null,
-                null,
-                MediaStore.Video.Media.DATE_ADDED + " DESC"
-        )) {
-            if (cursor != null && cursor.moveToFirst()) {
-                int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID);
-                int nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME);
-                int durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION);
-
-                do {
-                    long id = cursor.getLong(idColumn);
-                    String name = cursor.getString(nameColumn);
-                    long duration = cursor.getLong(durationColumn);
-                    Uri contentUri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
-
-                    Bitmap thumbnail = null;
-                    try {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            thumbnail = requireContext().getContentResolver().loadThumbnail(contentUri, new Size(120, 80), null);
-                        } else {
-                            thumbnail = MediaStore.Video.Thumbnails.getThumbnail(requireContext().getContentResolver(), id, MediaStore.Video.Thumbnails.MINI_KIND, null);
-                        }
-                    } catch (Exception e) {
-                        Log.e("VideoThumb", "Erro ao carregar miniatura", e);
-                    }
-
-                    String durationStr = formatDuration(duration);
-                    videoList.add(new VideoItem(name, contentUri, thumbnail, durationStr, duration));
-                } while (cursor.moveToNext());
-            }
-        } catch (Exception e) {
-            Log.e("VideoList", "Erro ao buscar vídeos", e);
-        }
-
+        List<VideoItem> videoList = getVideoList(requireContext());
         if (videoList.isEmpty()) {
-            Toast.makeText(requireContext(), "Nenhum vídeo encontrado no dispositivo", Toast.LENGTH_SHORT).show();
+            Toast.makeText(getContext(), "Nenhum vídeo encontrado no dispositivo", Toast.LENGTH_SHORT).show();
             return;
         }
 
         AlertDialog.Builder builder = new AlertDialog.Builder(requireContext());
         builder.setTitle("Selecione um Vídeo");
+
         VideoAdapter adapter = new VideoAdapter(requireContext(), videoList);
         builder.setAdapter(adapter, (dialog, which) -> {
             VideoItem selectedVideo = videoList.get(which);
-            startStreaming(selectedVideo.getUri(), selectedVideo.getTitle(), selectedVideo.getDurationMs());
+            startStreaming(selectedVideo);
         });
+
         builder.show();
     }
 
-    private String formatDuration(long durationMs) {
-        long seconds = durationMs / 1000;
-        long h = seconds / 3600;
-        long m = (seconds % 3600) / 60;
-        long s = seconds % 60;
-        if (h > 0) {
-            return String.format(Locale.getDefault(), "%02d:%02d:%02d", h, m, s);
-        } else {
-            return String.format(Locale.getDefault(), "%02d:%02d", m, s);
+    /**
+     * Obtém a lista de vídeos do MediaStore com metadados (título, duração, miniatura).
+     */
+    private List<VideoItem> getVideoList(Context context) {
+        List<VideoItem> list = new ArrayList<>();
+        ContentResolver contentResolver = context.getContentResolver();
+        Uri uri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+        
+        String[] projection = {
+                MediaStore.Video.Media._ID,
+                MediaStore.Video.Media.DISPLAY_NAME,
+                MediaStore.Video.Media.DATA,
+                MediaStore.Video.Media.DURATION
+        };
+
+        try (Cursor cursor = contentResolver.query(uri, projection, null, null, MediaStore.Video.Media.DATE_ADDED + " DESC")) {
+            if (cursor != null && cursor.moveToFirst()) {
+                do {
+                    long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID));
+                    String name = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME));
+                    String path = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATA));
+                    long duration = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION));
+
+                    // Garante que a duração seja capturada corretamente (alguns arquivos podem retornar 0 inicialmente)
+                    if (duration <= 0) {
+                        try {
+                            android.media.MediaMetadataRetriever retriever = new android.media.MediaMetadataRetriever();
+                            retriever.setDataSource(path);
+                            String time = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+                            if (time != null) duration = Long.parseLong(time);
+                            retriever.release();
+                        } catch (Exception e) {
+                            Log.e("VideoList", "Erro ao obter duração manual para " + name);
+                        }
+                    }
+
+                    list.add(new VideoItem(id, name, path, duration));
+                } while (cursor.moveToNext());
+            }
+        } catch (Exception e) {
+            Log.e("VideoList", "Erro ao listar vídeos", e);
         }
+        return list;
     }
 
-    private void startStreaming(Uri videoUri, String videoTitle, long durationMs) {
-        DLNADevice selectedDevice = DLNAManager.getSelectedDevice();
-        if (selectedDevice == null) {
-            Toast.makeText(requireContext(), "Por favor, selecione um dispositivo primeiro", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        binding.progressBar.setVisibility(View.VISIBLE);
-
-        // Iniciar servidor local
+    /**
+     * Inicia o servidor HTTP local e envia o comando de reprodução para a Smart TV.
+     */
+    private void startStreaming(VideoItem video) {
         try {
-            if (httpServer != null) httpServer.stop();
-            httpServer = new LocalHttpServer(requireContext(), 8080);
-            httpServer.setVideoUri(videoUri);
-            httpServer.start();
+            if (server != null) server.stop();
+            server = new LocalHttpServer(8080, video.getPath(), requireContext());
+            server.start();
 
-            // Pegar IP do celular para a URL
             String ip = DLNAManager.getLocalIpAddress();
             String videoUrl = "http://" + ip + ":8080/video.mp4";
-            Log.d("CastApp", "Servindo vídeo em: " + videoUrl);
 
+            // Envia o comando para a TV
             DLNAManager.setAVTransportURI(selectedDevice.getServiceUrl(), videoUrl);
-            // Enviar comando para a TV carregar o vídeo
 
-            // Simular tempo de carregamento e abrir tela de controle
-            binding.btnFindDevices.postDelayed(() -> {
-                DLNAManager.play(selectedDevice.getServiceUrl());
-                binding.progressBar.setVisibility(View.GONE);
+            // Navega para o ecrã de controlo passando os dados do vídeo
+            Bundle bundle = new Bundle();
+            bundle.putString("deviceUrl", selectedDevice.getServiceUrl());
+            bundle.putString("renderingControlUrl", selectedDevice.getRenderingControlUrl());
+            bundle.putString("videoTitle", video.getTitle());
+            bundle.putLong("durationMs", video.getDurationMs());
 
-                Bundle bundle = new Bundle();
-                bundle.putString("deviceUrl", selectedDevice.getServiceUrl());
-                bundle.putString("renderingControlUrl", selectedDevice.getRenderingControlUrl());
-                bundle.putString("videoTitle", videoTitle);
-                bundle.putLong("durationMs", durationMs);
-                NavHostFragment.findNavController(FirstFragment.this)
-                        .navigate(R.id.action_FirstFragment_to_SecondFragment, bundle);
-
-            }, 2000);
+            NavHostFragment.findNavController(FirstFragment.this)
+                    .navigate(R.id.action_FirstFragment_to_SecondFragment, bundle);
 
         } catch (Exception e) {
-            Toast.makeText(requireContext(), "Erro ao iniciar transmissão", Toast.LENGTH_SHORT).show();
-            binding.progressBar.setVisibility(View.GONE);
+            Toast.makeText(getContext(), "Erro ao iniciar streaming: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -247,5 +191,4 @@ public class FirstFragment extends Fragment {
         super.onDestroyView();
         binding = null;
     }
-
 }

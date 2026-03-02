@@ -200,24 +200,35 @@ public class DLNAManager {
     // COMANDOS AVTRANSPORT PRONTOS
     // =========================================================
 
+    /**
+     * Define a URI do vídeo na TV.
+     * Para TVs LG, é recomendável enviar o comando Play logo após para iniciar a reprodução.
+     */
     public static void setAVTransportURI(String url, String videoUrl) {
+        new Thread(() -> {
+            String meta = "<CurrentURI>" + videoUrl + "</CurrentURI>" + "<CurrentURIMetaData>"
+                    + "&lt;DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
+                    + "xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" "
+                    + "xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\"&gt;" +
 
-        String meta = "<CurrentURI>" + videoUrl + "</CurrentURI>" + "<CurrentURIMetaData>"
-                + "&lt;DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
-                + "xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" "
-                + "xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\"&gt;" +
+                    "&lt;item id=\"0\" parentID=\"0\" restricted=\"0\"&gt;" + "&lt;dc:title&gt;Video&lt;/dc:title&gt;"
+                    + "&lt;upnp:class&gt;object.item.videoItem&lt;/upnp:class&gt;"
+                    + "&lt;res protocolInfo=\"http-get:*:video/mp4:*\"&gt;" + videoUrl + "&lt;/res&gt;" + "&lt;/item&gt;" +
 
-                "&lt;item id=\"0\" parentID=\"0\" restricted=\"0\"&gt;" + "&lt;dc:title&gt;Video&lt;/dc:title&gt;"
-                + "&lt;upnp:class&gt;object.item.videoItem&lt;/upnp:class&gt;"
-                + "&lt;res protocolInfo=\"http-get:*:video/mp4:*\"&gt;" + videoUrl + "&lt;/res&gt;" + "&lt;/item&gt;" +
+                    "&lt;/DIDL-Lite&gt;" + "</CurrentURIMetaData>";
 
-                "&lt;/DIDL-Lite&gt;" + "</CurrentURIMetaData>";
-
-        sendCommand(url, "SetAVTransportURI", meta);
+            sendSoapSync(url, "urn:schemas-upnp-org:service:AVTransport:1", "SetAVTransportURI", meta, false);
+            
+            try {
+                Thread.sleep(1000); // Aguarda a TV carregar a URI
+                play(url); // Inicia o Play automaticamente
+            } catch (Exception e) {
+                Log.e(TAG, "Erro ao iniciar Play automático");
+            }
+        }).start();
     }
 
     public static void play(String url) {
-
         sendCommand(url, "Play", "<Speed>1</Speed>");
     }
 
@@ -231,22 +242,19 @@ public class DLNAManager {
 
     /**
      * Envia o comando Seek para a TV. 
-     * Refatorado para TVs LG: usa formato estrito sem InstanceID redundante no body Content.
      */
     public static void seek(String url, String time) {
         new Thread(() -> {
             try {
                 // 1. Pausa o vídeo
                 pause(url);
-                Thread.sleep(800); // Aumentado para TVs LG mais lentas
+                Thread.sleep(800);
 
-                // 2. Envia o comando Seek com formato SOAP simplificado e estrito
-                // Algumas TVs LG rejeitam se o InstanceID for enviado duas vezes ou em ordem errada
+                // 2. Envia o comando Seek
                 String args = "<InstanceID>0</InstanceID><Unit>REL_TIME</Unit><Target>" + time + "</Target>";
-                
                 sendSoapSync(url, "urn:schemas-upnp-org:service:AVTransport:1", "Seek", args, true);
                 
-                Thread.sleep(800); // Aguarda a TV processar o posicionamento
+                Thread.sleep(800);
 
                 // 3. Retoma a reprodução
                 play(url);
@@ -290,11 +298,8 @@ public class DLNAManager {
             conn.setRequestProperty("SOAPACTION", "\"" + service + "#" + action + "\"");
             conn.setDoOutput(true);
 
-            // Se isManualBody for true, usamos o args tal como está (já inclui InstanceID)
-            // Caso contrário, adicionamos o InstanceID padrão.
             String bodyContent = isManualBody ? args : "<InstanceID>0</InstanceID>" + args;
 
-            // Envelope SOAP simplificado (algumas LGs rejeitam encodingStyle ou namespaces complexos)
             String xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
                     + "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\">"
                     + "<s:Body>"
@@ -311,18 +316,6 @@ public class DLNAManager {
 
             int code = conn.getResponseCode();
             Log.d(TAG, "Resposta " + action + " = " + code);
-
-            if (code != 200) {
-                try {
-                    BufferedReader errorReader = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
-                    StringBuilder errorResponse = new StringBuilder();
-                    String line;
-                    while ((line = errorReader.readLine()) != null) errorResponse.append(line);
-                    Log.e(TAG, "Erro detalhado da TV (" + code + "): " + errorResponse.toString());
-                } catch (Exception e) {
-                    Log.e(TAG, "Não foi possível ler o erro da TV");
-                }
-            }
 
             conn.disconnect();
 
