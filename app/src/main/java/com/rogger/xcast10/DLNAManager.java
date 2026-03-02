@@ -231,26 +231,22 @@ public class DLNAManager {
 
     /**
      * Envia o comando Seek para a TV. 
-     * Para TVs LG, é crucial garantir que o InstanceID seja 0 e o Unit seja REL_TIME.
-     * Algumas TVs LG respondem com erro 500 se o comando for enviado muito rápido após a pausa.
+     * Refatorado para TVs LG: usa formato estrito sem InstanceID redundante no body Content.
      */
     public static void seek(String url, String time) {
         new Thread(() -> {
             try {
                 // 1. Pausa o vídeo
                 pause(url);
-                Thread.sleep(600); // Aumentado para 600ms para TVs LG
+                Thread.sleep(800); // Aumentado para TVs LG mais lentas
 
-                // 2. Envia o comando Seek com formato estrito
-                String args = "<InstanceID>0</InstanceID>" +
-                             "<Unit>REL_TIME</Unit>" +
-                             "<Target>" + time + "</Target>";
+                // 2. Envia o comando Seek com formato SOAP simplificado e estrito
+                // Algumas TVs LG rejeitam se o InstanceID for enviado duas vezes ou em ordem errada
+                String args = "<InstanceID>0</InstanceID><Unit>REL_TIME</Unit><Target>" + time + "</Target>";
                 
-                // Nota: O sendSoapSync já adiciona InstanceID no corpo, 
-                // mas para o Seek vamos garantir que está no lugar certo.
                 sendSoapSync(url, "urn:schemas-upnp-org:service:AVTransport:1", "Seek", args, true);
                 
-                Thread.sleep(600); // Aguarda a TV processar o posicionamento
+                Thread.sleep(800); // Aguarda a TV processar o posicionamento
 
                 // 3. Retoma a reprodução
                 play(url);
@@ -280,31 +276,36 @@ public class DLNAManager {
         new Thread(() -> sendSoapSync(url, service, action, args, false)).start();
     }
 
-    private static void sendSoapSync(String url, String service, String action, String args, boolean isSeek) {
+    private static void sendSoapSync(String url, String service, String action, String args, boolean isManualBody) {
         try {
             Log.d(TAG, "SOAP " + action + " -> " + url);
 
             HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
 
             conn.setRequestMethod("POST");
-            conn.setConnectTimeout(5000); // Aumentado para 5s
-            conn.setReadTimeout(5000);
+            conn.setConnectTimeout(8000); 
+            conn.setReadTimeout(8000);
 
             conn.setRequestProperty("Content-Type", "text/xml; charset=\"utf-8\"");
             conn.setRequestProperty("SOAPACTION", "\"" + service + "#" + action + "\"");
             conn.setDoOutput(true);
 
-            // Se for Seek, o args já contém o InstanceID para garantir a ordem correta exigida por algumas TVs
-            String bodyContent = isSeek ? args : "<InstanceID>0</InstanceID>" + args;
+            // Se isManualBody for true, usamos o args tal como está (já inclui InstanceID)
+            // Caso contrário, adicionamos o InstanceID padrão.
+            String bodyContent = isManualBody ? args : "<InstanceID>0</InstanceID>" + args;
 
+            // Envelope SOAP simplificado (algumas LGs rejeitam encodingStyle ou namespaces complexos)
             String xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-                    + "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
-                    + "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">" + "<s:Body>" + "<u:" + action
-                    + " xmlns:u=\"" + service + "\">" + bodyContent + "</u:" + action + ">"
-                    + "</s:Body>" + "</s:Envelope>";
+                    + "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\">"
+                    + "<s:Body>"
+                    + "<u:" + action + " xmlns:u=\"" + service + "\">"
+                    + bodyContent
+                    + "</u:" + action + ">"
+                    + "</s:Body>"
+                    + "</s:Envelope>";
 
             OutputStream os = conn.getOutputStream();
-            os.write(xml.getBytes());
+            os.write(xml.getBytes("UTF-8"));
             os.flush();
             os.close();
 
@@ -312,17 +313,21 @@ public class DLNAManager {
             Log.d(TAG, "Resposta " + action + " = " + code);
 
             if (code != 200) {
-                BufferedReader errorReader = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
-                StringBuilder errorResponse = new StringBuilder();
-                String line;
-                while ((line = errorReader.readLine()) != null) errorResponse.append(line);
-                Log.e(TAG, "Erro na TV (" + code + "): " + errorResponse.toString());
+                try {
+                    BufferedReader errorReader = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
+                    StringBuilder errorResponse = new StringBuilder();
+                    String line;
+                    while ((line = errorReader.readLine()) != null) errorResponse.append(line);
+                    Log.e(TAG, "Erro detalhado da TV (" + code + "): " + errorResponse.toString());
+                } catch (Exception e) {
+                    Log.e(TAG, "Não foi possível ler o erro da TV");
+                }
             }
 
             conn.disconnect();
 
         } catch (Exception e) {
-            Log.e(TAG, "Erro SOAP " + action, e);
+            Log.e(TAG, "Erro crítico SOAP " + action, e);
         }
     }
 
