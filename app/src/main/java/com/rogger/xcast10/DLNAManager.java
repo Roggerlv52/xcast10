@@ -5,6 +5,7 @@ import android.net.wifi.WifiManager;
 import android.util.Log;
 
 import java.io.BufferedReader;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.DatagramPacket;
@@ -23,12 +24,10 @@ import java.util.Collections;
  * Gere a lista de dispositivos disponíveis e as interações de rede para controlo de media via SOAP.
  */
 public class DLNAManager {
-
+    private static boolean isSeeking = false;
     private static final String TAG = "DLNAManager";
     private static final String SSDP_IP = "239.255.255.250";
     private static final int SSDP_PORT = 1900;
-
-    // Campo estático para persistir o dispositivo selecionado durante a sessão do app
     private static DLNADevice selectedDevice;
 
     public static DLNADevice getSelectedDevice() {
@@ -39,9 +38,12 @@ public class DLNAManager {
         selectedDevice = device;
     }
 
+    // =========================================================
+    // CALLBACK
+    // =========================================================
+
     public interface DiscoveryCallback {
         void onDeviceFound(DLNADevice device);
-
         void onFinished(String msg);
     }
 
@@ -82,7 +84,7 @@ public class DLNAManager {
                         socket.receive(resp);
 
                         String response = new String(resp.getData(), 0, resp.getLength());
-                        Log.d("SSDP", response);
+                       // Log.d("SSDP", response);
 
                         String location = parseHeader(response, "LOCATION");
                         if (location != null)
@@ -98,7 +100,7 @@ public class DLNAManager {
                 callback.onFinished("Nenhuma Smart TV encontrada na rede");
 
             } catch (Exception e) {
-                Log.e(TAG, "Erro SSDP", e);
+                //Log.e(TAG, "Erro SSDP", e);
                 callback.onFinished("Nenhuma Smart TV encontrada na rede");
             }
         }).start();
@@ -159,7 +161,7 @@ public class DLNAManager {
                         return;
                     }
                     callback.onDeviceFound(d);
-                    Log.d(TAG, "Device encontrado: " + name);
+                    //Log.d(TAG, "Device encontrado: " + name);
                 }
 
             } catch (Exception e) {
@@ -167,10 +169,6 @@ public class DLNAManager {
             }
         }).start();
     }
-
-    // =========================================================
-    // PARSERS
-    // =========================================================
 
     private static String extract(String xml, String start, String end) {
         if (!xml.contains(start))
@@ -211,6 +209,8 @@ public class DLNAManager {
                 "&lt;/DIDL-Lite&gt;" + "</CurrentURIMetaData>";
 
         sendCommand(url, "SetAVTransportURI", meta);
+        Log.d(TAG, "url -->" + url);
+        Log.d(TAG, "videoUrl -->" +videoUrl);
     }
 
     public static void play(String url) {
@@ -225,30 +225,121 @@ public class DLNAManager {
     public static void stop(String url) {
         sendCommand(url, "Stop", "");
     }
-
     /**
      * Envia o comando Seek para a TV.
      * Algumas TVs exigem que o vídeo seja pausado antes de realizar o Seek para evitar o erro "função não disponível".
      */
     public static void seek(String url, String time) {
-        new Thread(() -> {
-            try {
-                // 1. Pausa o vídeo antes de realizar o seek (melhora compatibilidade)
-                pause(url);
-                Thread.sleep(200); // Pequeno delay para a TV processar a pausa
+        if (isSeeking) {
+            Log.d(TAG, "⛔ SEEK já em execução, ignorando...");
+            return;
+        }
+            isSeeking = true;
 
-                // 2. Envia o comando Seek
-                String args = "<Unit>REL_TIME</Unit>" + "<Target>" + time + "</Target>";
-                sendSoapSync(url, "urn:schemas-upnp-org:service:AVTransport:1", "Seek", args);
+            new Thread(() -> {
+                try {
 
-                Thread.sleep(200); // Pequeno delay para a TV processar o seek
+                    Log.d(TAG, "🔥 SEEK CONTROLADO INICIADO");
 
-                // 3. Retoma a reprodução
-                play(url);
-            } catch (Exception e) {
-                Log.e(TAG, "Erro no processo de Seek", e);
-            }
+                    // Garantir que está tocando
+                    play(url);
+
+                    // Esperar estabilizar
+                    Thread.sleep(3500);
+
+                    boolean ok = sendSeek(url, "REL_TIME", time);
+
+                    if (ok) {
+                        Log.d(TAG, "✅ SEEK executado com sucesso!");
+                    } else {
+                        Log.e(TAG, "❌ SEEK falhou!");
+                    }
+
+                    // Esperar estabilizar antes de liberar novo seek
+                    Thread.sleep(2000);
+
+                } catch (Exception e) {
+                    Log.e(TAG, "Erro no seekProper", e);
+                } finally {
+                    isSeeking = false;
+                    Log.d(TAG, "🔓 SEEK liberado novamente");
+                }
         }).start();
+    }
+    private static boolean sendSeek(String url, String unit, String time) {
+        try {
+
+            String args =
+                    "<Unit>" + unit + "</Unit>" +
+                            "<Target>" + time + "</Target>";
+
+            HttpURLConnection conn =
+                    (HttpURLConnection) new URL(url).openConnection();
+
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+
+            conn.setRequestProperty("Content-Type", "text/xml; charset=\"utf-8\"");
+            conn.setRequestProperty(
+                    "SOAPACTION",
+                    "\"urn:schemas-upnp-org:service:AVTransport:1#Seek\""
+            );
+
+            conn.setDoOutput(true);
+
+            String xml =
+                    "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                            + "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
+                            + "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">"
+                            + "<s:Body>"
+                            + "<u:Seek xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\">"
+                            + "<InstanceID>0</InstanceID>"
+                            + args
+                            + "</u:Seek>"
+                            + "</s:Body>"
+                            + "</s:Envelope>";
+
+            OutputStream os = conn.getOutputStream();
+            os.write(xml.getBytes("UTF-8"));
+            os.flush();
+            os.close();
+
+            int responseCode = conn.getResponseCode();
+
+            Log.d(TAG, "SEEK " + unit + " RESPONSE: " + responseCode);
+
+            if (responseCode == 200) {
+                Log.d(TAG, "✅ SUPORTA " + unit);
+                conn.disconnect();
+                return true;
+            }
+
+            InputStream error = conn.getErrorStream();
+            if (error != null) {
+                BufferedReader br = new BufferedReader(new InputStreamReader(error));
+                String line;
+                while ((line = br.readLine()) != null) {
+                    Log.d(TAG, "ERRO SOAP: " + line);
+                }
+                br.close();
+            }
+
+            conn.disconnect();
+            return false;
+
+        } catch (Exception e) {
+            Log.e(TAG, "Erro testando " + unit, e);
+            return false;
+        }
+    }
+    public static void getPositionInfo(String url) {
+        sendSoapSync(
+                url,
+                "urn:schemas-upnp-org:service:AVTransport:1",
+                "GetPositionInfo",
+                ""
+        );
     }
 
     // =========================================================
@@ -262,56 +353,89 @@ public class DLNAManager {
     public static void sendRenderingCommand(String url, String action, String args) {
         sendSoap(url, "urn:schemas-upnp-org:service:RenderingControl:1", action, args);
     }
-
-    // =========================================================
-    // SOAP CORE
-    // =========================================================
-
     private static void sendSoap(String url, String service, String action, String args) {
         new Thread(() -> sendSoapSync(url, service, action, args)).start();
     }
-
     /**
      * Versão síncrona do envio SOAP para permitir sequenciamento de comandos (como no Seek).
      */
     private static void sendSoapSync(String url, String service, String action, String args) {
-        try {
-            Log.d(TAG, "SOAP " + action + " -> " + url);
+        HttpURLConnection conn = null;
 
-            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        try {
+            Log.d(TAG, "===============================");
+            Log.d(TAG, "SOAP ACTION: " + action);
+            Log.d(TAG, "URL: " + url);
+            Log.d(TAG, "ARGS: " + args);
+
+            conn = (HttpURLConnection) new URL(url).openConnection();
 
             conn.setRequestMethod("POST");
-            conn.setConnectTimeout(3000);
-            conn.setReadTimeout(3000);
+
+            conn.setConnectTimeout(7000);
+            conn.setReadTimeout(7000);
 
             conn.setRequestProperty("Content-Type", "text/xml; charset=\"utf-8\"");
             conn.setRequestProperty("SOAPACTION", "\"" + service + "#" + action + "\"");
             conn.setDoOutput(true);
+            conn.setDoInput(true);
 
-            String xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-                    + "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
-                    + "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">" + "<s:Body>" + "<u:" + action
-                    + " xmlns:u=\"" + service + "\">" + "<InstanceID>0</InstanceID>" + args + "</u:" + action + ">"
-                    + "</s:Body>" + "</s:Envelope>";
+            String xml =
+                    "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                            + "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
+                            + "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">"
+                            + "<s:Body>"
+                            + "<u:" + action + " xmlns:u=\"" + service + "\">"
+                            + "<InstanceID>0</InstanceID>"
+                            + args
+                            + "</u:" + action + ">"
+                            + "</s:Body>"
+                            + "</s:Envelope>";
+
+            Log.d(TAG, "SOAP XML:\n" + xml);
 
             OutputStream os = conn.getOutputStream();
-            os.write(xml.getBytes());
+            os.write(xml.getBytes("UTF-8"));
             os.flush();
             os.close();
 
-            int code = conn.getResponseCode();
-            Log.d(TAG, "Resposta " + action + " = " + code);
+            // 🔥 IMPORTANTE: forçar envio antes de ler resposta
+            conn.connect();
 
-            conn.disconnect();
+            int responseCode = conn.getResponseCode();
+            Log.d(TAG, "HTTP RESPONSE: " + responseCode);
 
+            // 🔍 Ler resposta se existir
+            InputStream is;
+
+            if (responseCode >= 200 && responseCode < 400) {
+                is = conn.getInputStream();
+            } else {
+                is = conn.getErrorStream();
+            }
+
+            if (is != null) {
+                BufferedReader br = new BufferedReader(new InputStreamReader(is));
+                String line;
+                StringBuilder response = new StringBuilder();
+                while ((line = br.readLine()) != null) {
+                    response.append(line);
+                }
+                br.close();
+
+                Log.d(TAG, "SOAP RESPONSE: " + response.toString());
+            }
+
+        } catch (SocketTimeoutException e) {
+            Log.w(TAG, "⚠ Timeout (mas pode ter executado): " + action);
         } catch (Exception e) {
             Log.e(TAG, "Erro SOAP " + action, e);
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
     }
-
-    // =========================================================
-    // IP LOCAL
-    // =========================================================
 
     public static String getLocalIpAddress() {
         try {

@@ -41,7 +41,7 @@ public class VideoAdapter extends ArrayAdapter<VideoItem> {
                 ivThumbnail.setImageResource(android.R.drawable.ic_menu_slideshow);
             }
             tvTitle.setText(video.getTitle());
-            tvDuration.setText(video.getDuration());
+            tvDuration.setText(video.formated());
         }
 
         return convertView;

@@ -26,7 +26,6 @@
             android:layout_height="wrap_content"
             android:textSize="14sp"
             android:textStyle="bold"
-            android:textColor="#000000"
             android:ellipsize="end"
             android:maxLines="3"
             android:text="Título do Vídeo" />
@@ -36,7 +35,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textSize="14sp"
-            android:textColor="#666666"
             android:text="00:00" />
     </LinearLayout>
 </LinearLayout>

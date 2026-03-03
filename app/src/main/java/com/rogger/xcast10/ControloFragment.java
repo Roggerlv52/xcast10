@@ -1,7 +1,8 @@
 package com.rogger.xcast10;
 
 import android.os.Bundle;
-import android.util.Log;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -14,31 +15,33 @@ import androidx.navigation.fragment.NavHostFragment;
 
 import com.rogger.xcast10.databinding.FragmentControloBinding;
 
+import java.util.Locale;
+
 /**
  * Fragmento responsável pela interface de controlo da reprodução de vídeo na TV.
  * Permite ao utilizador pausar, reproduzir, ajustar o volume e controlar o progresso do vídeo.
  * Exibe o título do vídeo que está a ser transmitido e permite avançar/retroceder.
  */
 public class ControloFragment extends Fragment {
+
     private String deviceUrl;
     private String renderingControlUrl;
     private String videoTitle;
     private long durationMs;
     private boolean isPlaying = true;
-    private int currentVolume = 30; // Volume inicial padrão
+    private int currentVolume = 10; // Volume inicial padrão
     private FragmentControloBinding binding;
 
-    @Override
-    public View onCreateView(
-            @NonNull LayoutInflater inflater, ViewGroup container,
-            Bundle savedInstanceState
-    ) {
+    private Handler handler = new Handler(Looper.getMainLooper());
+    private Runnable updateProgressRunnable;
 
+    @Override
+    public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         binding = FragmentControloBinding.inflate(inflater, container, false);
         return binding.getRoot();
-
     }
 
+    @Override
     public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
@@ -51,6 +54,7 @@ public class ControloFragment extends Fragment {
 
         if (videoTitle != null) {
             binding.tvVideoTitle.setText(videoTitle);
+            binding.txt.setText("Time: " + formatDuration(0)); // inicia no 0
         }
 
         // Configurar o SeekBar com a duração real (em segundos)
@@ -59,15 +63,14 @@ public class ControloFragment extends Fragment {
         }
 
         if (deviceUrl != null) {
+
             binding.btnCancel.setOnClickListener(v -> {
-                // Enviar comando Stop para a TV antes de sair
                 DLNAManager.stop(deviceUrl);
-                
-                // Voltar para o ecrã inicial
                 NavHostFragment.findNavController(ControloFragment.this)
                         .navigate(R.id.action_SecondFragment_to_FirstFragment);
             });
-            
+
+            // Botão Play/Pause
             binding.btnPausePlay.setOnClickListener(v -> {
                 if (isPlaying) {
                     DLNAManager.pause(deviceUrl);
@@ -79,65 +82,81 @@ public class ControloFragment extends Fragment {
                 isPlaying = !isPlaying;
             });
 
-            // Configuração de Volume
+            // Volume
             binding.btnVolumeUp.setOnClickListener(v -> {
-                currentVolume = Math.min(100, currentVolume + 5);
+                currentVolume = Math.min(100, currentVolume + 1);
                 updateVolume();
             });
-
             binding.btnVolumeDown.setOnClickListener(v -> {
-                currentVolume = Math.max(0, currentVolume - 5);
+                currentVolume = Math.max(0, currentVolume - 1);
                 updateVolume();
             });
 
+            // SeekBar
             binding.videoSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
-                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                }
+                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {}
 
                 @Override
-                public void onStartTrackingTouch(SeekBar seekBar) {
-                }
+                public void onStartTrackingTouch(SeekBar seekBar) {}
 
                 @Override
                 public void onStopTrackingTouch(SeekBar seekBar) {
                     int progress = seekBar.getProgress();
-                    String targetTime = formatTime(progress);
-                    
-                    // Envia o comando Seek melhorado
+                    String targetTime = formatDuration(progress * 1000L);
+
+                    // Envia comando Seek correto
                     DLNAManager.seek(deviceUrl, targetTime);
 
-                    // Garante que o estado visual do botão Play/Pause está correto,
-                    // já que o DLNAManager.seek força o Play no final.
+                    // Força Play visual
                     isPlaying = true;
                     binding.btnPausePlay.setText("Pausar");
                 }
             });
+
+            // Inicia atualização automática do SeekBar
+            startProgressUpdater();
         }
     }
 
     private void updateVolume() {
         String targetUrl = (renderingControlUrl != null) ? renderingControlUrl : deviceUrl;
         String args = "<Channel>Master</Channel><DesiredVolume>" + currentVolume + "</DesiredVolume>";
-        
-        // Envia o comando para o serviço de RenderingControl
         DLNAManager.sendRenderingCommand(targetUrl, "SetVolume", args);
-        
-        // Feedback visual para o utilizador
         Toast.makeText(requireContext(), "Volume: " + currentVolume + "%", Toast.LENGTH_SHORT).show();
     }
 
-    private String formatTime(int seconds) {
-        int h = seconds / 3600;
-        int m = (seconds % 3600) / 60;
-        int s = seconds % 60;
-        return String.format("%02d:%02d:%02d", h, m, s);
+    private String formatDuration(long millis) {
+        long totalSeconds = millis / 1000;
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+        return String.format(Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, seconds);
+    }
+
+    private void startProgressUpdater() {
+        updateProgressRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (isPlaying && binding.videoSeekBar.getMax() > 0) {
+                    int current = binding.videoSeekBar.getProgress();
+                    if (current < binding.videoSeekBar.getMax()) {
+                        binding.videoSeekBar.setProgress(current + 1);
+                        binding.txt.setText("Time: " + formatDuration((current + 1) * 1000L));
+                    }
+                }
+                handler.postDelayed(this, 1000);
+            }
+        };
+        handler.post(updateProgressRunnable);
     }
 
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        if (handler != null && updateProgressRunnable != null) {
+            handler.removeCallbacks(updateProgressRunnable);
+        }
         binding = null;
     }
-
 }
