@@ -7,4 +7,9 @@
     <string name="next">Next</string>
     <string name="previous">Previous</string>
 
+    <string name="msg_cansel_streaming">Tem certeza que deseja canselar a transmissão?</string>
+    <string name="title_cansel_streaming">Canselar transmissão</string>
+    <string name="msg_exit">Deseja voltar?</string>
+    <string name="title_exit">Sair</string>
+
 </resources>

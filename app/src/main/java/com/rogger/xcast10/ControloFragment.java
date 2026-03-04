@@ -9,11 +9,13 @@ import android.view.ViewGroup;
 import android.widget.SeekBar;
 import android.widget.Toast;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
 import androidx.fragment.app.Fragment;
 import androidx.navigation.fragment.NavHostFragment;
 
 import com.rogger.xcast10.databinding.FragmentControloBinding;
+import com.rogger.xcast10.util.DialogUtil;
 
 import java.util.Locale;
 
@@ -65,9 +67,7 @@ public class ControloFragment extends Fragment {
         if (deviceUrl != null) {
 
             binding.btnCancel.setOnClickListener(v -> {
-                DLNAManager.stop(deviceUrl);
-                NavHostFragment.findNavController(ControloFragment.this)
-                        .navigate(R.id.action_SecondFragment_to_FirstFragment);
+                canselStreaming();
             });
 
             // Botão Play/Pause
@@ -95,11 +95,12 @@ public class ControloFragment extends Fragment {
             // SeekBar
             binding.videoSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
-                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {}
+                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                }
 
                 @Override
-                public void onStartTrackingTouch(SeekBar seekBar) {}
-
+                public void onStartTrackingTouch(SeekBar seekBar) {
+                }
                 @Override
                 public void onStopTrackingTouch(SeekBar seekBar) {
                     int progress = seekBar.getProgress();
@@ -107,7 +108,6 @@ public class ControloFragment extends Fragment {
 
                     // Envia comando Seek correto
                     DLNAManager.seek(deviceUrl, targetTime);
-
                     // Força Play visual
                     isPlaying = true;
                     binding.btnPausePlay.setText("Pausar");
@@ -117,6 +117,37 @@ public class ControloFragment extends Fragment {
             // Inicia atualização automática do SeekBar
             startProgressUpdater();
         }
+        // Cria o callback para o botão voltar
+        OnBackPressedCallback callback = new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                DialogUtil.showDialog(requireContext(),
+                        String.valueOf(R.string.title_exit),
+                        String.valueOf(R.string.msg_exit), new DialogUtil.DialogCallback() {
+                    @Override
+                    public void onConfirm() {
+                        setEnabled(false);
+                        requireActivity().getOnBackPressedDispatcher().onBackPressed();
+                    }
+                });
+            }
+        };
+
+        // Adiciona o callback ao Dispatcher da Activity
+        requireActivity().getOnBackPressedDispatcher().addCallback(getViewLifecycleOwner(), callback);
+    }
+
+    private void canselStreaming() {
+        DialogUtil.showDialog(requireContext(),
+                String.valueOf(R.string.title_cansel_streaming),
+                String.valueOf(R.string.msg_cansel_streaming), new DialogUtil.DialogCallback() {
+            @Override
+            public void onConfirm() {
+                DLNAManager.stop(deviceUrl);
+                NavHostFragment.findNavController(ControloFragment.this)
+                        .navigate(R.id.action_SecondFragment_to_FirstFragment);
+            }
+        });
     }
 
     private void updateVolume() {
@@ -150,7 +181,6 @@ public class ControloFragment extends Fragment {
         };
         handler.post(updateProgressRunnable);
     }
-
     @Override
     public void onDestroyView() {
         super.onDestroyView();
