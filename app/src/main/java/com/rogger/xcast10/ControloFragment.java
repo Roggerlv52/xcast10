@@ -50,6 +50,7 @@ public class ControloFragment extends Fragment {
 
         if (getArguments() != null) {
             deviceUrl = getArguments().getString("deviceUrl");
+            DLNAManager.play(deviceUrl);
             renderingControlUrl = getArguments().getString("renderingControlUrl");
             videoTitle = getArguments().getString("videoTitle");
             durationMs = getArguments().getLong("durationMs", 0);

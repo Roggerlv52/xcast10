@@ -13,5 +13,8 @@
     <string name="title_exit">Sair</string>
 
     <string name="key_preference">titleFilme</string>
+    <!-- TODO: Remove or change this placeholder text -->
+    <string name="hello_blank_fragment">Hello blank fragment</string>
+    <string name="menu_gallery">Galeria</string>
 
 </resources>

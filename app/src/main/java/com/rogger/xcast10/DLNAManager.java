@@ -72,7 +72,7 @@ public class DLNAManager {
                         + "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n";
 
                 DatagramPacket packet = new DatagramPacket(query.getBytes(), query.length(),
-                        InetAddress.getByName("239.255.255.250"), 1900);
+                        InetAddress.getByName(SSDP_IP), SSDP_PORT);
 
                 socket.send(packet);
 

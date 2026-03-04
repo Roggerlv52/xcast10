@@ -1,6 +1,7 @@
 package com.rogger.xcast10;
 
 import android.Manifest;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
@@ -8,7 +9,6 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
@@ -17,6 +17,7 @@ import androidx.fragment.app.Fragment;
 import androidx.navigation.fragment.NavHostFragment;
 
 import com.rogger.xcast10.databinding.FragmentFirstBinding;
+import com.rogger.xcast10.service.LocalHttpServer;
 import com.rogger.xcast10.util.SharedPreference;
 
 import java.util.ArrayList;
@@ -45,11 +46,12 @@ public class FirstFragment extends Fragment {
 
     public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
+
         checkPermissions();
-        String filmTitle = SharedPreference.getString(requireContext(),String.valueOf(R.string.key_preference));
-        if (filmTitle != null){
+        String filmTitle = SharedPreference.getString(requireContext(), String.valueOf(R.string.key_preference));
+        if (filmTitle != null) {
             binding.txtLastFilm.setVisibility(View.VISIBLE);
-            binding.txtLastFilm.setText("Último filme visto \n"+filmTitle);
+            binding.txtLastFilm.setText("Último filme visto \n" + filmTitle);
         }
         // Tenta recuperar o dispositivo guardado anteriormente no DLNAManager
         selectedDevice = DLNAManager.getSelectedDevice();
@@ -61,8 +63,13 @@ public class FirstFragment extends Fragment {
         binding.btnFindDevices.setOnClickListener(v -> startDiscovery());
 
         binding.btnSelectVideo.setOnClickListener(v -> {
-            showVideoSelectionDialog();
+            binding.btnSelectVideo.postDelayed(() -> {
+                NavHostFragment.findNavController(FirstFragment.this)
+                        .navigate(R.id.action_firstFragment_to_galerryFragment);
+            }, 2000);
+
         });
+        setupGalleryResult();
     }
 
     private void checkPermissions() {
@@ -100,6 +107,24 @@ public class FirstFragment extends Fragment {
         });
     }
 
+    private void setupGalleryResult() {
+        getParentFragmentManager().setFragmentResultListener(
+                "gallery_result",
+                getViewLifecycleOwner(),
+                (key, bundle) -> {
+                    try {
+                        Uri urii = Uri.parse(bundle.getString("imageUri"));
+                        if (urii != null) {
+                            Log.d("VidioCelecionado", urii.getPath());
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+
+                }
+        );
+    }
+
     private void showDeviceDialog(String msg) {
         binding.progressBar.setVisibility(View.GONE);
         AlertDialog.Builder builder = new AlertDialog.Builder(requireContext());
@@ -119,71 +144,6 @@ public class FirstFragment extends Fragment {
         }
         builder.show();
     }
-
-    /**
-     * Exibe um diálogo com a lista de vídeos locais encontrados no dispositivo.
-     */
-    private void showVideoSelectionDialog() {
-        List<VideoItem> videoList = DataVideo.getVideoList(requireContext());
-        if (videoList.isEmpty()) {
-            Toast.makeText(getContext(), "Nenhum vídeo encontrado no dispositivo", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        AlertDialog.Builder builder = new AlertDialog.Builder(requireContext());
-        builder.setTitle("Selecione um Vídeo");
-
-        VideoAdapter adapter = new VideoAdapter(requireContext(), videoList);
-        builder.setAdapter(adapter, (dialog, which) -> {
-            VideoItem selectedVideo = videoList.get(which);
-            startStreaming(selectedVideo);
-        });
-        builder.show();
-    }
-
-    /**
-     * Inicia o servidor HTTP local e envia o comando de reprodução para a Smart TV.
-     */
-    private void startStreaming(VideoItem video) {
-
-        DLNADevice selectedDevice = DLNAManager.getSelectedDevice();
-        if (selectedDevice == null) {
-            Toast.makeText(requireContext(), "Por favor, selecione um dispositivo primeiro", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        binding.progressBar.setVisibility(View.VISIBLE);
-
-        try {
-            if (server != null) server.stop();
-            server = new LocalHttpServer(requireContext(), 8080);
-            server.setVideoUri(video.getUri());
-            server.start();
-
-            String ip = DLNAManager.getLocalIpAddress();
-            String videoUrl = "http://" + ip + ":8080/video.mp4";
-            Log.d("Transmitindo", "URL" + videoUrl);
-            // Envia o comando para a TV
-            DLNAManager.setAVTransportURI(selectedDevice.getServiceUrl(), videoUrl);
-
-            binding.btnFindDevices.postDelayed(() -> {
-                DLNAManager.play(selectedDevice.getServiceUrl());
-                binding.progressBar.setVisibility(View.GONE);
-
-                Bundle bundle = new Bundle();
-                bundle.putString("deviceUrl", selectedDevice.getServiceUrl());
-                bundle.putString("renderingControlUrl", selectedDevice.getRenderingControlUrl());
-                bundle.putString("videoTitle", video.getTitle());
-                bundle.putLong("durationMs", video.getDuration());
-                NavHostFragment.findNavController(FirstFragment.this)
-                        .navigate(R.id.action_FirstFragment_to_SecondFragment, bundle);
-
-            }, 2000);
-
-        } catch (Exception e) {
-            Toast.makeText(getContext(), "Erro ao iniciar streaming: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
-
     @Override
     public void onDestroyView() {
         super.onDestroyView();

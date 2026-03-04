@@ -1,4 +1,4 @@
-package com.rogger.xcast10;
+package com.rogger.xcast10.service;
 
 import android.content.Context;
 import android.net.Uri;
@@ -11,7 +11,6 @@ import android.webkit.MimeTypeMap;
 import fi.iki.elonen.NanoHTTPD;
 
 import java.io.FileInputStream;
-import java.io.InputStream;
 import java.util.Map;
 
 /**

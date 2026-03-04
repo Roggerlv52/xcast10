@@ -1,4 +1,4 @@
-package com.rogger.xcast10;
+package com.rogger.xcast10.gallery.data;
 
 import android.graphics.Bitmap;
 import android.net.Uri;

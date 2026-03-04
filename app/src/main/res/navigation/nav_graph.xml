@@ -23,6 +23,18 @@
         <action
             android:id="@+id/action_FirstFragment_to_SecondFragment"
             app:destination="@id/SecondFragment" />
+        <action
+            android:id="@+id/action_firstFragment_to_galerryFragment"
+            app:destination="@id/nav_gallery_fragment" />
+    </fragment>
+    <fragment
+        android:id="@+id/nav_gallery_fragment"
+        android:name="com.rogger.xcast10.gallery.GalleryFragment"
+        android:label="@string/menu_gallery"
+        tools:layout="@layout/fragment_gallery" >
+        <action
+            android:id="@+id/action_nav_gallery_fragment_to_SecondFragment"
+            app:destination="@id/SecondFragment" />
     </fragment>
     <fragment
         android:id="@+id/SecondFragment"

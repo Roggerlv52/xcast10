@@ -1,4 +1,4 @@
-package com.rogger.xcast10;
+package com.rogger.xcast10.gallery.data;
 
 import android.content.ContentResolver;
 import android.content.ContentUris;
