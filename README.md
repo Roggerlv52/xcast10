@@ -1,6 +1,7 @@
 # Android Video Cast App (Java)
 
-Este é um aplicativo Android nativo desenvolvido em Java para transmitir vídeos locais do seu smartphone para qualquer Smart TV compatível com DLNA/UPnP na mesma rede WiFi.
+Este é um aplicativo Android nativo desenvolvido em Java para transmitir vídeos locais do seu smartphone para  Smart TV compatível com DLNA/UPnP na mesma rede WiFi.
+"Atualmete so foi testado em tv LG"
 
 ## Funcionalidades
 - **Descoberta de Dispositivos**: Busca automática de Smart TVs na rede via protocolo SSDP.
