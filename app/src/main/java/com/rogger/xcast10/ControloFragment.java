@@ -16,6 +16,7 @@ import androidx.navigation.fragment.NavHostFragment;
 
 import com.rogger.xcast10.databinding.FragmentControloBinding;
 import com.rogger.xcast10.util.DialogUtil;
+import com.rogger.xcast10.util.SharedPreference;
 
 import java.util.Locale;
 
@@ -52,6 +53,7 @@ public class ControloFragment extends Fragment {
             renderingControlUrl = getArguments().getString("renderingControlUrl");
             videoTitle = getArguments().getString("videoTitle");
             durationMs = getArguments().getLong("durationMs", 0);
+            SharedPreference.setString(requireContext(),String.valueOf(R.string.key_preference),videoTitle);
         }
 
         if (videoTitle != null) {
@@ -122,8 +124,8 @@ public class ControloFragment extends Fragment {
             @Override
             public void handleOnBackPressed() {
                 DialogUtil.showDialog(requireContext(),
-                        String.valueOf(R.string.title_exit),
-                        String.valueOf(R.string.msg_exit), new DialogUtil.DialogCallback() {
+                        getString(R.string.title_exit),
+                        getString(R.string.msg_exit), new DialogUtil.DialogCallback() {
                     @Override
                     public void onConfirm() {
                         setEnabled(false);
@@ -139,8 +141,8 @@ public class ControloFragment extends Fragment {
 
     private void canselStreaming() {
         DialogUtil.showDialog(requireContext(),
-                String.valueOf(R.string.title_cansel_streaming),
-                String.valueOf(R.string.msg_cansel_streaming), new DialogUtil.DialogCallback() {
+                getString(R.string.title_cansel_streaming),
+                getString(R.string.msg_cansel_streaming), new DialogUtil.DialogCallback() {
             @Override
             public void onConfirm() {
                 DLNAManager.stop(deviceUrl);

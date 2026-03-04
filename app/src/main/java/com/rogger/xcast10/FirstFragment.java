@@ -17,6 +17,7 @@ import androidx.fragment.app.Fragment;
 import androidx.navigation.fragment.NavHostFragment;
 
 import com.rogger.xcast10.databinding.FragmentFirstBinding;
+import com.rogger.xcast10.util.SharedPreference;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,6 +46,11 @@ public class FirstFragment extends Fragment {
     public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         checkPermissions();
+        String filmTitle = SharedPreference.getString(requireContext(),String.valueOf(R.string.key_preference));
+        if (filmTitle != null){
+            binding.txtLastFilm.setVisibility(View.VISIBLE);
+            binding.txtLastFilm.setText("Último filme visto \n"+filmTitle);
+        }
         // Tenta recuperar o dispositivo guardado anteriormente no DLNAManager
         selectedDevice = DLNAManager.getSelectedDevice();
         if (selectedDevice != null) {

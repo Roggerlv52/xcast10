@@ -7,7 +7,13 @@
     android:orientation="vertical"
     android:padding="20dp"
     tools:context=".FirstFragment">
-
+    <TextView
+        android:id="@+id/txt_last_film"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="40dp"
+        android:visibility="invisible"
+        android:textStyle="bold" />
 
     <TextView
         android:layout_width="wrap_content"

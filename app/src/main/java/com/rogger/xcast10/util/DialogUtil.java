@@ -47,14 +47,4 @@ public class DialogUtil {
         dialog.show();
     }
 
-    /**
-     * Exibe um alerta apenas com o botão de fechar (Aviso).
-     */
-    public static void showAlert(Context context, String title, String message) {
-        new AlertDialog.Builder(context)
-                .setTitle(title)
-                .setMessage(message)
-                .setPositiveButton("Fechar", null)
-                .show();
-    }
 }

@@ -12,4 +12,6 @@
     <string name="msg_exit">Deseja voltar?</string>
     <string name="title_exit">Sair</string>
 
+    <string name="key_preference">titleFilme</string>
+
 </resources>
