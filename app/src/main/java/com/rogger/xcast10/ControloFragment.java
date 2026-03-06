@@ -130,7 +130,7 @@ public class ControloFragment extends Fragment {
                     @Override
                     public void onConfirm() {
                         setEnabled(false);
-                        requireActivity().getOnBackPressedDispatcher().onBackPressed();
+                        canselStreaming();
                     }
                 });
             }

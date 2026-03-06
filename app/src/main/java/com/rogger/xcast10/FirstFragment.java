@@ -147,6 +147,6 @@ public class FirstFragment extends Fragment {
     @Override
     public void onDestroyView() {
         super.onDestroyView();
-        binding = null;
+        //binding = null;
     }
 }
