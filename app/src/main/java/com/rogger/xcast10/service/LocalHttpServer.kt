@@ -1,171 +1,130 @@
-package com.rogger.xcast10.service;
+package com.rogger.xcast10.service
 
-import android.content.Context;
-import android.net.Uri;
-import android.net.wifi.WifiManager;
-import android.os.ParcelFileDescriptor;
-import android.os.PowerManager;
-import android.util.Log;
-import android.webkit.MimeTypeMap;
-
-import fi.iki.elonen.NanoHTTPD;
-
-import java.io.FileInputStream;
-import java.util.Map;
+/*
+ * Desenvolvido por Roger de Oliveira
+ * Data: 03/07/2026
+ * Hora: 12:17
+ */
+import android.content.Context
+import android.net.Uri
+import android.net.wifi.WifiManager
+import android.os.ParcelFileDescriptor
+import android.os.PowerManager
+import android.util.Log
+import android.webkit.MimeTypeMap
+import fi.iki.elonen.NanoHTTPD
+import java.io.FileInputStream
 
 /**
  * Servidor HTTP local baseado no NanoHTTPD.
- * Serve o ficheiro de vídeo do smartphone para que a Smart TV o possa descarregar e reproduzir via rede.
- * Suporta pedidos de "Range" para permitir avançar/retroceder o vídeo na TV.
- * Implementa WakeLock e WifiLock para evitar interrupções quando o ecrã se apaga.
+ * Serve o ficheiro de vídeo do telemóvel para que a Smart TV o possa descarregar e reproduzir via rede.
+ * Suporta pedidos "Range" para permitir avançar/retroceder o vídeo na TV.
+ * Mantém WakeLock e WifiLock para evitar interrupções quando o ecrã se apaga.
  */
-public class LocalHttpServer extends NanoHTTPD {
+class LocalHttpServer(
+    private val context: Context,
+    port: Int
+) : NanoHTTPD(port) {
 
-    private static final String TAG = "LocalHttpService";
+    private var videoUri: Uri? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
-    private Context context;
-    private Uri videoUri;
-    private PowerManager.WakeLock wakeLock;
-    private WifiManager.WifiLock wifiLock;
+    init {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Xcast10:StreamingWakeLock")
 
-    public LocalHttpServer(Context context, int port) {
-        super(port);
-        this.context = context;
-        initLocks();
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Xcast10:StreamingWifiLock")
     }
 
-    private void initLocks() {
-        PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-        if (powerManager != null) {
-            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Xcast10:StreamingWakeLock");
-        }
-
-        WifiManager wifiManager = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        if (wifiManager != null) {
-            wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Xcast10:StreamingWifiLock");
-        }
+    override fun start() {
+        super.start()
+        acquireLocks()
     }
 
-    @Override
-    public void start() throws java.io.IOException {
-        super.start();
-        acquireLocks();
+    override fun stop() {
+        super.stop()
+        releaseLocks()
     }
 
-    @Override
-    public void stop() {
-        super.stop();
-        releaseLocks();
+    private fun acquireLocks() {
+        wakeLock?.let { if (!it.isHeld) it.acquire() }
+        wifiLock?.let { if (!it.isHeld) it.acquire() }
     }
 
-    private void acquireLocks() {
-        if (wakeLock != null && !wakeLock.isHeld()) {
-            wakeLock.acquire();
-            Log.d(TAG, "WakeLock adquirido");
-        }
-        if (wifiLock != null && !wifiLock.isHeld()) {
-            wifiLock.acquire();
-            Log.d(TAG, "WifiLock adquirido");
-        }
+    private fun releaseLocks() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wifiLock?.let { if (it.isHeld) it.release() }
     }
 
-    private void releaseLocks() {
-        if (wakeLock != null && wakeLock.isHeld()) {
-            wakeLock.release();
-            Log.d(TAG, "WakeLock libertado");
-        }
-        if (wifiLock != null && wifiLock.isHeld()) {
-            wifiLock.release();
-            Log.d(TAG, "WifiLock libertado");
-        }
+    fun setVideoUri(uri: Uri) {
+        this.videoUri = uri
     }
 
-    public void setVideoUri(Uri uri) {
-        this.videoUri = uri;
-    }
-
-    @Override
-    public Response serve(IHTTPSession session) {
+    override fun serve(session: IHTTPSession): Response {
         try {
+            val uri = videoUri
+                ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "No video")
 
-            if (videoUri == null)
-                return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "No video");
+            val pfd: ParcelFileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
+                ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "File not found")
 
-            ParcelFileDescriptor pfd = context.getContentResolver().openFileDescriptor(videoUri, "r");
+            val fileSize = pfd.statSize
+            val fis = FileInputStream(pfd.fileDescriptor)
+            val mime = getMimeType(uri.toString())
 
-            if (pfd == null)
-                return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "File not found");
+            val range = session.headers["range"]
 
-            long fileSize = pfd.getStatSize();
-            FileInputStream fis = new FileInputStream(pfd.getFileDescriptor());
-
-            String mime = getMimeType(videoUri.toString());
-
-            Map<String, String> headers = session.getHeaders();
-            String range = headers.get("range");
-
-            long start = 0;
-            long end = fileSize - 1;
+            var start = 0L
+            var end = fileSize - 1
 
             if (range != null && range.startsWith("bytes=")) {
                 try {
-                    range = range.substring("bytes=".length());
-                    String[] parts = range.split("-");
+                    val parts = range.substring("bytes=".length).split("-")
+                    start = parts[0].toLong()
+                    if (parts.size > 1 && parts[1].isNotEmpty()) end = parts[1].toLong()
+                    if (end >= fileSize) end = fileSize - 1
 
-                    start = Long.parseLong(parts[0]);
+                    val contentLength = end - start + 1
+                    fis.skip(start)
 
-                    if (parts.length > 1 && !parts[1].isEmpty()) {
-                        end = Long.parseLong(parts[1]);
-                    }
-
-                    if (end >= fileSize)
-                        end = fileSize - 1;
-
-                    long contentLength = end - start + 1;
-
-                    fis.skip(start);
-
-                    Response res = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mime, fis, contentLength);
-
-                    res.addHeader("Accept-Ranges", "bytes");
-                    res.addHeader("Content-Range", "bytes " + start + "-" + end + "/" + fileSize);
-                    res.addHeader("Content-Length", String.valueOf(contentLength));
-                    res.addHeader("Connection", "keep-alive");
-                    res.addHeader("Cache-Control", "no-cache");
-
-                    return res;
-
-                } catch (Exception e) {
-                    Log.e(TAG, "Erro Range parse", e);
+                    val res = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mime, fis, contentLength)
+                    res.addHeader("Accept-Ranges", "bytes")
+                    res.addHeader("Content-Range", "bytes $start-$end/$fileSize")
+                    res.addHeader("Content-Length", contentLength.toString())
+                    res.addHeader("Connection", "keep-alive")
+                    res.addHeader("Cache-Control", "no-cache")
+                    return res
+                } catch (e: Exception) {
+                    Log.e(TAG, "Erro Range parse", e)
                 }
             }
 
-            // resposta completa (sem range)
-            Response res = newFixedLengthResponse(Response.Status.OK, mime, fis, fileSize);
-            res.addHeader("Accept-Ranges", "bytes");
-            res.addHeader("Content-Length", String.valueOf(fileSize));
-            res.addHeader("Connection", "keep-alive");
-            res.addHeader("Cache-Control", "no-cache");
+            val res = newFixedLengthResponse(Response.Status.OK, mime, fis, fileSize)
+            res.addHeader("Accept-Ranges", "bytes")
+            res.addHeader("Content-Length", fileSize.toString())
+            res.addHeader("Connection", "keep-alive")
+            res.addHeader("Cache-Control", "no-cache")
+            return res
 
-            return res;
-
-        } catch (Exception e) {
-            if (e instanceof java.net.SocketException) {
-                e.getMessage();
-            }
-            Log.e(TAG, "Erro ao servir vídeo", e);
+        } catch (e: Exception) {
+            Log.e(TAG, "Erro ao servir vídeo", e)
         }
 
-        return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Server error");
+        return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Server error")
     }
 
-    private String getMimeType(String url) {
-        String ext = MimeTypeMap.getFileExtensionFromUrl(url);
+    private fun getMimeType(url: String): String {
+        val ext = MimeTypeMap.getFileExtensionFromUrl(url)
         if (ext != null) {
-            String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.toLowerCase());
-            if (mime != null)
-                return mime;
+            val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
+            if (mime != null) return mime
         }
-        return "video/mp4"; // fallback seguro
+        return "video/mp4"
+    }
+
+    companion object {
+        private const val TAG = "LocalHttpServer"
     }
 }

@@ -1,74 +1,37 @@
-package com.rogger.xcast10;
+package com.rogger.xcast10
 
-import android.os.Bundle;
-
-import com.google.android.material.snackbar.Snackbar;
-
-import androidx.appcompat.app.AppCompatActivity;
-
-import android.view.View;
-
-import androidx.navigation.NavController;
-import androidx.navigation.Navigation;
-import androidx.navigation.ui.AppBarConfiguration;
-import androidx.navigation.ui.NavigationUI;
-
-import com.rogger.xcast10.databinding.ActivityMainBinding;
-
-import android.view.Menu;
-import android.view.MenuItem;
+/*
+ * Desenvolvido por Roger de Oliveira
+ * Data: 03/07/2026
+ * Hora: 12:27
+ */
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Surface
+import androidx.compose.ui.Modifier
+import com.rogger.xcast10.ui.navigation.AppRoot
+import com.rogger.xcast10.ui.theme.Xcast10Theme
 
 /**
- * Atividade principal da aplicação.
- * Configura a barra de ferramentas (Toolbar), a navegação entre fragmentos e a interface base do utilizador.
- * Serve como contentor para o FirstFragment e o ControloFragment.
+ * Atividade única da aplicação (arquitetura 100% Jetpack Compose).
+ * Aloja o NavHost com o menu lateral (drawer) e os três ecrãs principais:
+ * Início, Galeria de vídeos e Controlo de reprodução.
  */
-public class MainActivity extends AppCompatActivity {
+class MainActivity : ComponentActivity() {
 
-    private AppBarConfiguration appBarConfiguration;
-    private ActivityMainBinding binding;
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-
-        binding = ActivityMainBinding.inflate(getLayoutInflater());
-        setContentView(binding.getRoot());
-
-        setSupportActionBar(binding.toolbar);
-
-        NavController navController = Navigation.findNavController(this, R.id.nav_host_fragment_content_main);
-        appBarConfiguration = new AppBarConfiguration.Builder(navController.getGraph()).build();
-        NavigationUI.setupActionBarWithNavController(this, navController, appBarConfiguration);
-
-    }
-
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        // Inflate the menu; this adds items to the action bar if it is present.
-        getMenuInflater().inflate(R.menu.menu_main, menu);
-        return true;
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        // Handle action bar item clicks here. The action bar will
-        // automatically handle clicks on the Home/Up button, so long
-        // as you specify a parent activity in AndroidManifest.xml.
-        int id = item.getItemId();
-
-        //noinspection SimplifiableIfStatement
-        if (id == R.id.action_settings) {
-            return true;
+        setContent {
+            Xcast10Theme {
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    AppRoot()
+                }
+            }
         }
-
-        return super.onOptionsItemSelected(item);
-    }
-
-    @Override
-    public boolean onSupportNavigateUp() {
-        NavController navController = Navigation.findNavController(this, R.id.nav_host_fragment_content_main);
-        return NavigationUI.navigateUp(navController, appBarConfiguration)
-                || super.onSupportNavigateUp();
     }
 }
