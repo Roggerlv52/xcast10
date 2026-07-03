@@ -9,17 +9,19 @@ import android.content.Context
 import android.net.wifi.WifiManager
 import android.util.Log
 import com.rogger.xcast10.data.model.DLNADevice
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.HttpURLConnection
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.HttpURLConnection
 import java.net.NetworkInterface
 import java.net.SocketTimeoutException
 import java.net.URL
@@ -44,6 +46,7 @@ object DLNADiscoveryManager {
      * Inicia uma descoberta SSDP e emite os dispositivos encontrados através de um [Flow].
      * O flow termina automaticamente após o timeout da busca (ver [DiscoveryEvent.Finished]).
      */
+    /*
     fun discoverDevices(context: Context): Flow<DiscoveryEvent> = callbackFlow {
         var lock: WifiManager.MulticastLock? = null
         var socket: DatagramSocket? = null
@@ -108,6 +111,75 @@ object DLNADiscoveryManager {
             lock?.let { if (it.isHeld) it.release() }
         }
     }
+  */
+    fun discoverDevices(context: Context): Flow<DiscoveryEvent> = callbackFlow {
+
+        val job = launch(Dispatchers.IO) {
+
+            var lock: WifiManager.MulticastLock? = null
+            var socket: DatagramSocket? = null
+
+            try {
+
+                val wifi = context.applicationContext
+                    .getSystemService(Context.WIFI_SERVICE) as WifiManager
+
+                lock = wifi.createMulticastLock("ssdp").apply {
+                    setReferenceCounted(true)
+                    acquire()
+                }
+
+                socket = DatagramSocket(null).apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(1901))
+                    soTimeout = 3000
+                }
+                val query = "M-SEARCH * HTTP/1.1\r\n" +
+                        "HOST: 239.255.255.250:1900\r\n" +
+                        "MAN: \"ssdp:discover\"\r\n" +
+                        "MX: 3\r\n" +
+                        "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
+
+                val packet = DatagramPacket(
+                    query.toByteArray(), query.length,
+                    InetAddress.getByName(SSDP_IP), SSDP_PORT
+                )
+                socket.send(packet)
+                val buf = ByteArray(2048)
+                val seenLocations = mutableSetOf<String>()
+
+                while (true) {
+                    try {
+                        val resp = DatagramPacket(buf, buf.size)
+                        socket.receive(resp)
+                        val response = String(resp.data, 0, resp.length)
+
+                        val location = parseHeader(response, "LOCATION")
+                        if (location != null && seenLocations.add(location)) {
+                            fetchDeviceDetails(location)?.let { device ->
+                                trySend(DiscoveryEvent.DeviceFound(device))
+                            }
+                        }
+                    } catch (e: SocketTimeoutException) {
+                        break
+                    }
+                }
+                trySend(DiscoveryEvent.Finished("Nenhuma Smart TV encontrada na rede"))
+            } catch (e: Exception) {
+                Log.e(TAG, "Erro SSDP", e)
+                trySend(DiscoveryEvent.Finished("Nenhuma Smart TV encontrada na rede"))
+
+            } finally {
+                socket?.close()
+                lock?.release()
+                close()
+            }
+        }
+
+        awaitClose {
+            job.cancel()
+        }
+    }
 
     private fun fetchDeviceDetails(location: String): DLNADevice? {
         return try {
@@ -131,7 +203,8 @@ object DLNADiscoveryManager {
                 return null
             }
 
-            val base = url.protocol + "://" + url.host + (if (url.port != -1) ":${url.port}" else "")
+            val base =
+                url.protocol + "://" + url.host + (if (url.port != -1) ":${url.port}" else "")
 
             if (!avTransport.startsWith("/")) avTransport = "/$avTransport"
             if (rendering != null && !rendering.startsWith("/")) rendering = "/$rendering"
