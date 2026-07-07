@@ -5,6 +5,8 @@ package com.rogger.xcast10.viewmodel
  * Data: 03/07/2026
  * Hora: 12:26
  */
+
+// ALTERADO: removido "import com.rogger.xcast10.util.TimeFormatter" (não é mais usado — seekTo não monta mais o REL_TIME)
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -18,8 +20,8 @@ import com.rogger.xcast10.network.DLNADiscoveryManager
 import com.rogger.xcast10.service.StreamingManager
 import com.rogger.xcast10.service.StreamingResult
 import com.rogger.xcast10.util.PreferencesManager
-import com.rogger.xcast10.util.TimeFormatter
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -27,7 +29,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -68,6 +69,8 @@ class CastViewModel(application: Application) : AndroidViewModel(application) {
     val events: SharedFlow<CastEvent> = _events.asSharedFlow()
 
     private var progressJob: Job? = null
+    private var currentPlayingItem: VideoItem? = null
+    private var seekJob: Job? = null // NOVO: referência ao seek em andamento, para cancelar tentativas obsoletas
 
     init {
         viewModelScope.launch {
@@ -147,8 +150,22 @@ class CastViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(isStartingStream = true)
 
         viewModelScope.launch {
-            when (val result = StreamingManager.startStreaming(context, item, device)) {
+            // NOVO: revalida o dispositivo antes de transmitir — a porta de controlo (controlURL)
+            // pode ter mudado desde a descoberta (ex: TV reiniciou o serviço DLNA), o que antes
+            // causava "Failed to connect" ao tentar SetAVTransportURI/Play com a porta antiga.
+            val freshDevice = DLNADiscoveryManager.refreshDevice(device)
+            if (freshDevice == null) {
+                _uiState.value = _uiState.value.copy(
+                    isStartingStream = false,
+                    streamError = "Não foi possível conectar à TV. Procure o dispositivo novamente."
+                )
+                return@launch
+            }
+            _uiState.value = _uiState.value.copy(selectedDevice = freshDevice) // NOVO: atualiza com a URL atual
+
+            when (val result = StreamingManager.startStreaming(context, item, freshDevice)) {
                 is StreamingResult.Success -> {
+                    currentPlayingItem = item
                     prefs.setLastVideoTitle(item.title)
                     _uiState.value = _uiState.value.copy(
                         isStartingStream = false,
@@ -211,17 +228,33 @@ class CastViewModel(application: Application) : AndroidViewModel(application) {
     /** Chamado quando o utilizador larga a SeekBar; [positionSeconds] é a posição em segundos. */
     fun seekTo(positionSeconds: Int) {
         val playback = _uiState.value.playback
-        val deviceUrl = playback.deviceUrl ?: return
+        val device = _uiState.value.selectedDevice
+        val item = currentPlayingItem
+        val positionMs = positionSeconds * 1000L
 
-        val targetTime = TimeFormatter.formatDuration(positionSeconds * 1000L)
-        DLNAControlManager.seek(deviceUrl, targetTime)
+        if (device == null || item == null) return
 
+        // Atualiza a UI otimisticamente enquanto a transmissão é reiniciada no ponto certo
         _uiState.value = _uiState.value.copy(
-            playback = playback.copy(
-                positionMs = positionSeconds * 1000L,
-                isPlaying = true
-            )
+            playback = playback.copy(positionMs = positionMs, isPlaying = true)
         )
+
+        // NOVO: cancela um seek anterior que ainda esteja em andamento — sem isso, arrastar a
+        // barra várias vezes seguidas enfileirava vários seeks obsoletos, um atrás do outro,
+        // deixando a TV "atrasada" processando pontos que o utilizador já não quer mais.
+        seekJob?.cancel()
+        seekJob = viewModelScope.launch {
+            when (val result = StreamingManager.seekByRestarting(
+                getApplication(), item, device, positionMs
+            )) {
+                is StreamingResult.Success -> {
+                    // stream reiniciado com sucesso a partir do novo ponto
+                }
+                is StreamingResult.Error -> {
+                    _uiState.value = _uiState.value.copy(streamError = result.message)
+                }
+            }
+        }
     }
 
     private fun startProgressLoop() {
@@ -259,6 +292,7 @@ class CastViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         progressJob?.cancel()
+        seekJob?.cancel() // NOVO
     }
 
     private companion object {

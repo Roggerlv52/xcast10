@@ -5,6 +5,7 @@ package com.rogger.xcast10.service
  * Data: 03/07/2026
  * Hora: 12:17
  */
+
 import android.content.Context
 import android.net.Uri
 import android.net.wifi.WifiManager
@@ -27,6 +28,8 @@ class LocalHttpServer(
 ) : NanoHTTPD(port) {
 
     private var videoUri: Uri? = null
+    private var startPositionMs: Long = 0
+    private var totalDurationMs: Long = 0
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
@@ -58,8 +61,16 @@ class LocalHttpServer(
         wifiLock?.let { if (it.isHeld) it.release() }
     }
 
-    fun setVideoUri(uri: Uri) {
+    /**
+     * @param startPositionMs ponto (em milissegundos) a partir do qual o vídeo deve começar a ser
+     * servido. Usado para simular um "seek" reiniciando a transmissão a partir de um offset de bytes,
+     * já que o comando DLNA Seek nativo não é confiável em muitas Smart TVs.
+     * @param totalDurationMs duração total do vídeo, usada para calcular o offset proporcional.
+     */
+    fun setVideoUri(uri: Uri, startPositionMs: Long = 0, totalDurationMs: Long = 0) {
         this.videoUri = uri
+        this.startPositionMs = startPositionMs
+        this.totalDurationMs = totalDurationMs
     }
 
     override fun serve(session: IHTTPSession): Response {
@@ -70,8 +81,16 @@ class LocalHttpServer(
             val pfd: ParcelFileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
                 ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "File not found")
 
-            val fileSize = pfd.statSize
+            val realFileSize = pfd.statSize
+            val byteOffset = if (totalDurationMs > 0 && startPositionMs > 0) {
+                ((startPositionMs.toDouble() / totalDurationMs) * realFileSize).toLong()
+                    .coerceIn(0, realFileSize - 1)
+            } else 0L
+
             val fis = FileInputStream(pfd.fileDescriptor)
+            if (byteOffset > 0) fis.skip(byteOffset)
+
+            val fileSize = realFileSize - byteOffset // tamanho "virtual" a partir do offset
             val mime = getMimeType(uri.toString())
 
             val range = session.headers["range"]
@@ -87,13 +106,15 @@ class LocalHttpServer(
                     if (end >= fileSize) end = fileSize - 1
 
                     val contentLength = end - start + 1
-                    fis.skip(start)
+                    fis.skip(start) // relativo ao offset já aplicado acima
 
                     val res = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mime, fis, contentLength)
                     res.addHeader("Accept-Ranges", "bytes")
                     res.addHeader("Content-Range", "bytes $start-$end/$fileSize")
                     res.addHeader("Content-Length", contentLength.toString())
-                    res.addHeader("Connection", "keep-alive")
+                    // ALTERADO: era "keep-alive" — evitava que a TV reutilizasse o socket depois
+                    // que derrubamos o servidor num seek, causando "Broken pipe"
+                    res.addHeader("Connection", "close")
                     res.addHeader("Cache-Control", "no-cache")
                     return res
                 } catch (e: Exception) {
@@ -104,7 +125,9 @@ class LocalHttpServer(
             val res = newFixedLengthResponse(Response.Status.OK, mime, fis, fileSize)
             res.addHeader("Accept-Ranges", "bytes")
             res.addHeader("Content-Length", fileSize.toString())
-            res.addHeader("Connection", "keep-alive")
+            // ALTERADO: era "keep-alive" — evitava que a TV reutilizasse o socket depois
+            // que derrubamos o servidor num seek, causando "Broken pipe"
+            res.addHeader("Connection", "close")
             res.addHeader("Cache-Control", "no-cache")
             return res
 

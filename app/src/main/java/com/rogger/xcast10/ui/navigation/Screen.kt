@@ -21,8 +21,10 @@ sealed class Screen(
     val filledIcon: ImageVector? = null,
     val outlinedIcon: ImageVector? = null
 ) {
-    data object Home : Screen("home", "Início", Icons.Filled.Home, Icons.Outlined.Home)
-    data object Gallery : Screen("gallery", "Galeria de vídeos", Icons.Filled.VideoLibrary, Icons.Outlined.VideoLibrary)
+    data object Home : Screen("home", "Início",
+        Icons.Filled.Home, Icons.Outlined.Home)
+    data object Gallery : Screen("gallery", "Galeria de vídeos",
+        Icons.Filled.VideoLibrary, Icons.Outlined.VideoLibrary)
     data object Player : Screen("player", "Controlo")
 
     companion object {

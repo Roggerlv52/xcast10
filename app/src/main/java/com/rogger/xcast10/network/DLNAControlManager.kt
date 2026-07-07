@@ -1,12 +1,8 @@
 package com.rogger.xcast10.network
 
-/*
- * Desenvolvido por Roger de Oliveira
- * Data: 03/07/2026
- * Hora: 12:14
- */
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStream
@@ -55,10 +51,14 @@ object DLNAControlManager {
         sendSoapAsync(url, RENDERING_CONTROL, action, args)
 
     /**
-     * Envia o comando Seek para a TV, garantindo primeiro que está a reproduzir (algumas TVs
-     * exigem que o vídeo esteja em Play antes de aceitar o Seek).
+     * Envia o comando Seek para a TV.
+     *
+     * @param alreadyPlaying quando `true` (vídeo já em reprodução), o Seek é enviado diretamente,
+     * sem forçar um Play antes — isso evita uma chamada SOAP redundante (que às vezes gera timeout)
+     * e torna o avanço/recuo do vídeo bem mais rápido. Quando `false` (vídeo pausado), forçamos um
+     * Play antes do Seek, pois algumas TVs exigem o transporte em estado PLAYING para aceitar o Seek.
      */
-    fun seek(url: String, time: String) {
+    fun seek(url: String, time: String, alreadyPlaying: Boolean = true) {
         if (isSeeking) {
             Log.d(TAG, "Seek já em execução, ignorando...")
             return
@@ -67,11 +67,14 @@ object DLNAControlManager {
 
         Thread {
             try {
-                play(url)
-                Thread.sleep(3500)
+                if (!alreadyPlaying) {
+                    play(url)
+                    Thread.sleep(1200)
+                }
                 val ok = sendSeekSync(url, "REL_TIME", time)
                 Log.d(TAG, if (ok) "Seek executado com sucesso" else "Seek falhou")
-                Thread.sleep(2000)
+                Thread.sleep(1000)
+                logPositionInfo(url, label = "(após Seek nativo)")
             } catch (e: Exception) {
                 Log.e(TAG, "Erro no seek", e)
             } finally {
@@ -119,9 +122,9 @@ object DLNAControlManager {
         sendSoapSync(url, AV_TRANSPORT, action, args)
     }
 
-    private fun sendSoapSync(url: String, service: String, action: String, args: String) {
+    private fun sendSoapSync(url: String, service: String, action: String, args: String): String? {
         var conn: HttpURLConnection? = null
-        try {
+        return try {
             conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 7000
@@ -145,10 +148,82 @@ object DLNAControlManager {
             }
         } catch (e: SocketTimeoutException) {
             Log.w(TAG, "Timeout (mas pode ter executado): $action")
+            null
         } catch (e: Exception) {
             Log.e(TAG, "Erro SOAP $action", e)
+            null
         } finally {
             conn?.disconnect()
+        }
+    }
+
+    /**
+     * Pergunta à própria TV qual é a posição atual de reprodução (RelTime).
+     * Usado como diagnóstico: se o valor não mudar depois de um Seek, confirma que o
+     * renderer da TV aceita o comando mas não o implementa de facto.
+     */
+    fun logPositionInfo(url: String, label: String = "") {
+        Thread {
+            val response = sendSoapSync(url, AV_TRANSPORT, "GetPositionInfo", "")
+            val relTime = response?.let { extractXmlTag(it, "RelTime") }
+            val trackDuration = response?.let { extractXmlTag(it, "TrackDuration") }
+            Log.d(TAG, "GetPositionInfo $label -> RelTime=$relTime / TrackDuration=$trackDuration")
+        }.start()
+    }
+
+    private fun extractXmlTag(xml: String, tag: String): String? {
+        val start = "<$tag>"
+        val end = "</$tag>"
+        if (!xml.contains(start) || !xml.contains(end)) return null
+        return xml.substringAfter(start).substringBefore(end)
+    }
+
+    // NOVO: função inteira adicionada — substitui os antigos delay(1200)/delay(2000) fixos
+    /**
+     * Espera ativamente (polling via GetPositionInfo) até a TV confirmar que a mídia foi
+     * carregada de facto, verificando se `TrackDuration` já é maior que zero — em vez de
+     * assumir isso com um `delay()` fixo, que é frágil (pode ser rápido demais numa TV lenta
+     * ou desnecessariamente longo numa TV rápida).
+     *
+     * @return `true` se a TV confirmou a duração dentro do [timeoutMs]; `false` se o tempo
+     * esgotou (nesse caso, o chamador deve seguir em frente mesmo assim, como melhor esforço).
+     */
+    suspend fun waitForMediaReady(
+        url: String,
+        timeoutMs: Long = 15_000,
+        pollIntervalMs: Long = 700
+    ): Boolean = withContext(Dispatchers.IO) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+
+        while (System.currentTimeMillis() < deadline) {
+            val response = sendSoapSync(url, AV_TRANSPORT, "GetPositionInfo", "")
+            val durationMs = response?.let { extractXmlTag(it, "TrackDuration") }?.let { parseUpnpTime(it) }
+
+            if (durationMs != null && durationMs > 0) {
+                Log.d(TAG, "Mídia pronta na TV (TrackDuration confirmado: ${durationMs}ms)")
+                return@withContext true
+            }
+
+            delay(pollIntervalMs)
+        }
+
+        Log.w(TAG, "Timeout esperando a TV confirmar a duração da mídia (seguindo mesmo assim)")
+        false
+    }
+
+    // NOVO: converte o formato de tempo do UPnP ("H:MM:SS" ou "H:MM:SS.mmm") para milissegundos
+    private fun parseUpnpTime(time: String?): Long? {
+        if (time.isNullOrBlank()) return null
+        val parts = time.split(":")
+        if (parts.size != 3) return null
+
+        return try {
+            val hours = parts[0].toLong()
+            val minutes = parts[1].toLong()
+            val seconds = parts[2].substringBefore(".").toLong()
+            (hours * 3600 + minutes * 60 + seconds) * 1000
+        } catch (e: Exception) {
+            null
         }
     }
 
