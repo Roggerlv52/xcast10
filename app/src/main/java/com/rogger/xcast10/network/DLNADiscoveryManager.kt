@@ -14,15 +14,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.HttpURLConnection
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.HttpURLConnection
 import java.net.NetworkInterface
 import java.net.SocketTimeoutException
 import java.net.URL
@@ -51,67 +53,109 @@ object DLNADiscoveryManager {
         var lock: WifiManager.MulticastLock? = null
         var socket: DatagramSocket? = null
 
-        try {
-            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            lock = wifi.createMulticastLock("ssdp").apply {
-                setReferenceCounted(true)
-                acquire()
-            }
+        val job = launch(Dispatchers.IO) {
+            try {
+                val wifi =
+                    context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
 
-            socket = DatagramSocket(null).apply {
-                reuseAddress = true
-                bind(InetSocketAddress(1901))
-                soTimeout = 3000
-            }
-
-            val query = "M-SEARCH * HTTP/1.1\r\n" +
-                    "HOST: 239.255.255.250:1900\r\n" +
-                    "MAN: \"ssdp:discover\"\r\n" +
-                    "MX: 3\r\n" +
-                    "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
-
-            val packet = DatagramPacket(
-                query.toByteArray(), query.length,
-                InetAddress.getByName(SSDP_IP), SSDP_PORT
-            )
-            socket.send(packet)
-
-            val buf = ByteArray(2048)
-            val seenLocations = mutableSetOf<String>()
-
-            while (true) {
-                try {
-                    val resp = DatagramPacket(buf, buf.size)
-                    socket.receive(resp)
-                    val response = String(resp.data, 0, resp.length)
-
-                    val location = parseHeader(response, "LOCATION")
-                    if (location != null && seenLocations.add(location)) {
-                        fetchDeviceDetails(location)?.let { device ->
-                            trySend(DiscoveryEvent.DeviceFound(device))
-                        }
-                    }
-                } catch (e: SocketTimeoutException) {
-                    break
+                lock = wifi.createMulticastLock("ssdp").apply {
+                    setReferenceCounted(true)
+                    acquire()
                 }
-            }
 
-            trySend(DiscoveryEvent.Finished("Nenhuma Smart TV encontrada na rede"))
-        } catch (e: Exception) {
-            Log.e(TAG, "Erro SSDP", e)
-            trySend(DiscoveryEvent.Finished("Nenhuma Smart TV encontrada na rede"))
-        } finally {
-            socket?.close()
-            lock?.let { if (it.isHeld) it.release() }
-            close()
+                socket = DatagramSocket().apply {
+                    reuseAddress = true
+                    soTimeout = 6000
+                }
+
+                val query = """
+                M-SEARCH * HTTP/1.1
+                HOST: 239.255.255.250:1900
+                MAN: "ssdp:discover"
+                MX: 3
+                ST: ssdp:all
+                
+            """.trimIndent().replace("\n", "\r\n")
+
+                val packet = DatagramPacket(
+                    query.toByteArray(Charsets.UTF_8),
+                    query.toByteArray(Charsets.UTF_8).size,
+                    InetAddress.getByName(SSDP_IP),
+                    SSDP_PORT
+                )
+
+                socket!!.send(packet)
+
+                val seenLocations = mutableSetOf<String>()
+
+                while (isActive) {
+                    try {
+                        val buffer = ByteArray(4096)
+                        val responsePacket = DatagramPacket(buffer, buffer.size)
+
+                        socket!!.receive(responsePacket)
+
+                        val response = String(
+                            responsePacket.data,
+                            0,
+                            responsePacket.length
+                        )
+
+                        val location = parseHeader(response, "LOCATION")
+
+                        if (location != null && seenLocations.add(location)) {
+                            fetchDeviceDetails(location)?.let { device ->
+                                trySend(DiscoveryEvent.DeviceFound(device))
+                            }
+                        }
+
+                    } catch (_: SocketTimeoutException) {
+                        break
+                    }
+                }
+
+                if (seenLocations.isEmpty()) {
+                    trySend(
+                        DiscoveryEvent.Finished(
+                            "Nenhuma Smart TV encontrada na rede"
+                        )
+                    )
+                } else {
+                    trySend(
+                        DiscoveryEvent.Finished(
+                            "${seenLocations.size} dispositivos encontrados"
+                        )
+                    )
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Erro SSDP", e)
+                trySend(
+                    DiscoveryEvent.Finished(
+                        "Nenhuma Smart TV encontrada na rede"
+                    )
+                )
+            } finally {
+                socket?.close()
+                lock?.let {
+                    if (it.isHeld) {
+                        it.release()
+                    }
+                }
+                channel.close()
+            }
         }
 
         awaitClose {
+            job.cancel()
             socket?.close()
-            lock?.let { if (it.isHeld) it.release() }
+            lock?.let {
+                if (it.isHeld) {
+                    it.release()
+                }
+            }
         }
     }
-
     /**
      * Revalida um dispositivo já conhecido, buscando de novo a sua descrição XML
      * (a mesma [DLNADevice.location] usada na descoberta original) para obter o
@@ -149,7 +193,8 @@ object DLNADiscoveryManager {
                 return null
             }
 
-            val base = url.protocol + "://" + url.host + (if (url.port != -1) ":${url.port}" else "")
+            val base =
+                url.protocol + "://" + url.host + (if (url.port != -1) ":${url.port}" else "")
 
             if (!avTransport.startsWith("/")) avTransport = "/$avTransport"
             if (rendering != null && !rendering.startsWith("/")) rendering = "/$rendering"
