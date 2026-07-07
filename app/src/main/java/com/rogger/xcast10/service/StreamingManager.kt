@@ -17,6 +17,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * Resultado do arranque de uma sessão de streaming.
@@ -73,13 +75,21 @@ object StreamingManager {
                     val videoUrl = "http://$ip:$PORT/video.mp4"
                     Log.d(TAG, "URL: $videoUrl")
 
+                    val conn = URL(videoUrl).openConnection() as HttpURLConnection
+                    conn.requestMethod = "GET"
+                    conn.connectTimeout = 3000
+
+                    if (conn.responseCode != 200) {
+                        throw IllegalStateException("Servidor HTTP não respondeu corretamente")
+                    }
+
                     DLNAControlManager.setAVTransportURI(deviceServiceUrl, videoUrl)
 
                     // ALTERADO: era "delay(2000)" fixo — agora aguarda ativamente (polling) a TV
                     // confirmar que carregou a mídia (TrackDuration > 0) antes de mandar o Play.
                     // Uma pequena espera inicial dá tempo do SetAVTransportURI ser processado
                     // antes da primeira consulta.
-                    delay(400)
+                    delay(6000)
                     DLNAControlManager.waitForMediaReady(deviceServiceUrl)
 
                     DLNAControlManager.play(deviceServiceUrl)
@@ -133,12 +143,19 @@ object StreamingManager {
                     val videoUrl = "http://$ip:$PORT/${System.currentTimeMillis()}.mp4"
                     Log.d(TAG, "Seek (restart) URL: $videoUrl, offset ms: $positionMs")
 
+                    val conn = URL(videoUrl).openConnection() as HttpURLConnection
+                    conn.requestMethod = "GET"
+                    conn.connectTimeout = 3000
+
+                    if (conn.responseCode != 200) {
+                        throw IllegalStateException("Servidor HTTP não respondeu corretamente")
+                    }
                     DLNAControlManager.setAVTransportURI(deviceServiceUrl, videoUrl)
 
                     // ALTERADO: era "delay(1200)" fixo — agora aguarda ativamente (polling) a TV
                     // confirmar a nova duração. Timeout menor que no startStreaming, pois a TV
                     // já está "quente" (já tinha um vídeo a tocar antes deste seek).
-                    delay(300)
+                    delay(6000)
                     DLNAControlManager.waitForMediaReady(deviceServiceUrl, timeoutMs = 8_000, pollIntervalMs = 500)
 
                     DLNAControlManager.play(deviceServiceUrl)

@@ -82,14 +82,25 @@ class LocalHttpServer(
                 ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "File not found")
 
             val realFileSize = pfd.statSize
-            val byteOffset = if (totalDurationMs > 0 && startPositionMs > 0) {
-                ((startPositionMs.toDouble() / totalDurationMs) * realFileSize).toLong()
+            /*
+           val byteOffset = if (totalDurationMs > 0 && startPositionMs > 0) {
+               ((startPositionMs.toDouble() / totalDurationMs) * realFileSize).toLong()
                     .coerceIn(0, realFileSize - 1)
             } else 0L
+             */
 
             val fis = FileInputStream(pfd.fileDescriptor)
-            if (byteOffset > 0) fis.skip(byteOffset)
-
+            val byteOffset = when {
+                session.headers["range"] != null -> {
+                    val range = session.headers["range"]!!
+                    range.substringAfter("bytes=")
+                        .substringBefore("-")
+                        .toLongOrNull() ?: 0L
+                }
+                else -> 0L
+            }
+            if (byteOffset > 0) //fis.skip(byteOffset)
+                fis.channel.position(byteOffset)
             val fileSize = realFileSize - byteOffset // tamanho "virtual" a partir do offset
             val mime = getMimeType(uri.toString())
 
@@ -109,13 +120,18 @@ class LocalHttpServer(
                     fis.skip(start) // relativo ao offset já aplicado acima
 
                     val res = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mime, fis, contentLength)
+                    /*
                     res.addHeader("Accept-Ranges", "bytes")
                     res.addHeader("Content-Range", "bytes $start-$end/$fileSize")
                     res.addHeader("Content-Length", contentLength.toString())
-                    // ALTERADO: era "keep-alive" — evitava que a TV reutilizasse o socket depois
-                    // que derrubamos o servidor num seek, causando "Broken pipe"
                     res.addHeader("Connection", "close")
                     res.addHeader("Cache-Control", "no-cache")
+                    */
+                    res.addHeader("Content-Type", mime)
+                    res.addHeader("Accept-Ranges", "bytes")
+                    res.addHeader("Connection", "keep-alive")
+                    res.addHeader("Transfer-Encoding", "identity")
+                    res.addHeader("Content-Length", contentLength.toString())
                     return res
                 } catch (e: Exception) {
                     Log.e(TAG, "Erro Range parse", e)
@@ -123,12 +139,18 @@ class LocalHttpServer(
             }
 
             val res = newFixedLengthResponse(Response.Status.OK, mime, fis, fileSize)
-            res.addHeader("Accept-Ranges", "bytes")
+
+            /*res.addHeader("Accept-Ranges", "bytes")
             res.addHeader("Content-Length", fileSize.toString())
-            // ALTERADO: era "keep-alive" — evitava que a TV reutilizasse o socket depois
-            // que derrubamos o servidor num seek, causando "Broken pipe"
             res.addHeader("Connection", "close")
             res.addHeader("Cache-Control", "no-cache")
+            */
+            res.addHeader("Content-Type", mime)
+            res.addHeader("Accept-Ranges", "bytes")
+            res.addHeader("Connection", "keep-alive")
+            res.addHeader("Transfer-Encoding", "identity")
+            res.addHeader("Content-Length", fileSize.toString())
+
             return res
 
         } catch (e: Exception) {
@@ -146,7 +168,6 @@ class LocalHttpServer(
         }
         return "video/mp4"
     }
-
     companion object {
         private const val TAG = "LocalHttpServer"
     }
