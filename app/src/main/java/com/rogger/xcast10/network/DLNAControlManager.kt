@@ -25,6 +25,7 @@ object DLNAControlManager {
     private var isSeeking = false
 
     fun setAVTransportURI(url: String, videoUrl: String) {
+        /*
         val meta = "<CurrentURI>$videoUrl</CurrentURI>" +
                 "<CurrentURIMetaData>" +
                 "&lt;DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\" " +
@@ -39,6 +40,16 @@ object DLNAControlManager {
                 "</CurrentURIMetaData>"
 
         sendCommandAsync(url, "SetAVTransportURI", meta)
+
+         */
+        val args = buildString {
+            append("<CurrentURI>")
+            append(videoUrl)
+            append("</CurrentURI>")
+            append("<CurrentURIMetaData></CurrentURIMetaData>")
+        }
+
+        sendCommandAsync(url, "SetAVTransportURI", args)
     }
 
     fun play(url: String) = sendCommandAsync(url, "Play", "<Speed>1</Speed>")
@@ -50,14 +61,6 @@ object DLNAControlManager {
     fun sendRenderingCommand(url: String, action: String, args: String) =
         sendSoapAsync(url, RENDERING_CONTROL, action, args)
 
-    /**
-     * Envia o comando Seek para a TV.
-     *
-     * @param alreadyPlaying quando `true` (vídeo já em reprodução), o Seek é enviado diretamente,
-     * sem forçar um Play antes — isso evita uma chamada SOAP redundante (que às vezes gera timeout)
-     * e torna o avanço/recuo do vídeo bem mais rápido. Quando `false` (vídeo pausado), forçamos um
-     * Play antes do Seek, pois algumas TVs exigem o transporte em estado PLAYING para aceitar o Seek.
-     */
     fun seek(url: String, time: String, alreadyPlaying: Boolean = true) {
         if (isSeeking) {
             Log.d(TAG, "Seek já em execução, ignorando...")
@@ -89,8 +92,8 @@ object DLNAControlManager {
             val args = "<Unit>$unit</Unit><Target>$time</Target>"
             conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 5000
-                readTimeout = 5000
+                connectTimeout = 6000
+                readTimeout = 6000
                 setRequestProperty("Content-Type", "text/xml; charset=\"utf-8\"")
                 setRequestProperty("SOAPACTION", "\"urn:schemas-upnp-org:service:AVTransport:1#Seek\"")
                 doOutput = true
@@ -127,8 +130,8 @@ object DLNAControlManager {
         return try {
             conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 7000
-                readTimeout = 7000
+                connectTimeout = 3000
+                readTimeout = 6000
                 setRequestProperty("Content-Type", "text/xml; charset=\"utf-8\"")
                 setRequestProperty("SOAPACTION", "\"$service#$action\"")
                 doOutput = true

@@ -50,161 +50,143 @@ object DLNADiscoveryManager {
      * O flow termina automaticamente após o timeout da busca (ver [DiscoveryEvent.Finished]).
      */
     fun discoverDevices(context: Context): Flow<DiscoveryEvent> = callbackFlow {
-        var lock: WifiManager.MulticastLock? = null
-        var socket: DatagramSocket? = null
 
         val job = launch(Dispatchers.IO) {
+
+            var lock: WifiManager.MulticastLock? = null
+            var socket: DatagramSocket? = null
+
             try {
-                val wifi =
-                    context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+
+                val wifi = context.applicationContext
+                    .getSystemService(Context.WIFI_SERVICE) as WifiManager
 
                 lock = wifi.createMulticastLock("ssdp").apply {
                     setReferenceCounted(true)
                     acquire()
                 }
 
-                socket = DatagramSocket().apply {
+                socket = DatagramSocket(null).apply {
                     reuseAddress = true
-                    soTimeout = 6000
+                    bind(InetSocketAddress(1901))
+                    soTimeout = 3000
                 }
-
-                val query = """
-                M-SEARCH * HTTP/1.1
-                HOST: 239.255.255.250:1900
-                MAN: "ssdp:discover"
-                MX: 3
-                ST: ssdp:all
-                
-            """.trimIndent().replace("\n", "\r\n")
+                val query = "M-SEARCH * HTTP/1.1\r\n" +
+                        "HOST: 239.255.255.250:1900\r\n" +
+                        "MAN: \"ssdp:discover\"\r\n" +
+                        "MX: 3\r\n" +
+                        "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
 
                 val packet = DatagramPacket(
-                    query.toByteArray(Charsets.UTF_8),
-                    query.toByteArray(Charsets.UTF_8).size,
-                    InetAddress.getByName(SSDP_IP),
-                    SSDP_PORT
+                    query.toByteArray(), query.length,
+                    InetAddress.getByName(SSDP_IP), SSDP_PORT
                 )
-
-                socket!!.send(packet)
-
+                socket.send(packet)
+                val buf = ByteArray(2048)
                 val seenLocations = mutableSetOf<String>()
 
-                while (isActive) {
+                while (true) {
                     try {
-                        val buffer = ByteArray(4096)
-                        val responsePacket = DatagramPacket(buffer, buffer.size)
-
-                        socket!!.receive(responsePacket)
-
-                        val response = String(
-                            responsePacket.data,
-                            0,
-                            responsePacket.length
-                        )
+                        val resp = DatagramPacket(buf, buf.size)
+                        socket.receive(resp)
+                        val response = String(resp.data, 0, resp.length)
 
                         val location = parseHeader(response, "LOCATION")
-
                         if (location != null && seenLocations.add(location)) {
                             fetchDeviceDetails(location)?.let { device ->
                                 trySend(DiscoveryEvent.DeviceFound(device))
                             }
                         }
-
-                    } catch (_: SocketTimeoutException) {
+                    } catch (e: SocketTimeoutException) {
                         break
                     }
                 }
-
-                if (seenLocations.isEmpty()) {
-                    trySend(
-                        DiscoveryEvent.Finished(
-                            "Nenhuma Smart TV encontrada na rede"
-                        )
-                    )
-                } else {
-                    trySend(
-                        DiscoveryEvent.Finished(
-                            "${seenLocations.size} dispositivos encontrados"
-                        )
-                    )
-                }
-
+                trySend(DiscoveryEvent.Finished("Nenhuma Smart TV encontrada na rede"))
             } catch (e: Exception) {
                 Log.e(TAG, "Erro SSDP", e)
-                trySend(
-                    DiscoveryEvent.Finished(
-                        "Nenhuma Smart TV encontrada na rede"
-                    )
-                )
+                trySend(DiscoveryEvent.Finished("Nenhuma Smart TV encontrada na rede"))
+
             } finally {
                 socket?.close()
-                lock?.let {
-                    if (it.isHeld) {
-                        it.release()
-                    }
-                }
-                channel.close()
+                lock?.release()
+                close()
             }
         }
 
         awaitClose {
             job.cancel()
-            socket?.close()
-            lock?.let {
-                if (it.isHeld) {
-                    it.release()
-                }
-            }
         }
     }
-    /**
-     * Revalida um dispositivo já conhecido, buscando de novo a sua descrição XML
-     * (a mesma [DLNADevice.location] usada na descoberta original) para obter o
-     * `controlURL` (AVTransport/RenderingControl) ATUAL.
-     *
-     * Isto é necessário porque muitas Smart TVs geram uma porta UPnP diferente a cada
-     * reinício/standby do serviço DLNA — se usarmos o serviceUrl "antigo" guardado na
-     * descoberta, o comando SOAP falha com ConnectException (porta já não existe).
-     *
-     * Devolve `null` se a TV não estiver mais acessível na rede.
-     */
+
     suspend fun refreshDevice(device: DLNADevice): DLNADevice? = withContext(Dispatchers.IO) {
         fetchDeviceDetails(device.location)
     }
 
     private fun fetchDeviceDetails(location: String): DLNADevice? {
         return try {
+
             val url = URL(location)
+
             val conn = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 4000
-                readTimeout = 4000
+                connectTimeout = 5000
+                readTimeout = 5000
+                requestMethod = "GET"
             }
 
-            val content = BufferedReader(InputStreamReader(conn.inputStream)).use { reader ->
-                reader.readText()
+            val content = conn.inputStream.bufferedReader().use {
+                it.readText()
             }
 
-            val name = extract(content, "<friendlyName>", "</friendlyName>") ?: "Smart TV"
-            var avTransport = extractServiceUrl(content, "AVTransport:1")
-            var rendering = extractServiceUrl(content, "RenderingControl:1")
+            Log.d(TAG, "===== DEVICE XML =====")
+            Log.d(TAG, content)
 
-            Log.d("DLNA_XML", "Location: $location")
+            val name =
+                extract(content, "<friendlyName>", "</friendlyName>")
+                    ?: "Smart TV"
 
-            if (avTransport == null || !content.contains("AVTransport:1")) {
+            val avTransport =
+                extractServiceUrl(content, "AVTransport:1")
+                    ?: extractServiceUrl(content, "AVTransport:2")
+                    ?: extractServiceUrl(content, "AVTransport:3")
+
+            val rendering =
+                extractServiceUrl(content, "RenderingControl:1")
+                    ?: extractServiceUrl(content, "RenderingControl:2")
+
+            if (avTransport == null) {
+                Log.d(TAG, "AVTransport não encontrado.")
                 return null
             }
 
             val base =
-                url.protocol + "://" + url.host + (if (url.port != -1) ":${url.port}" else "")
+                "${url.protocol}://${url.host}" +
+                        if (url.port != -1) ":${url.port}" else ""
 
-            if (!avTransport.startsWith("/")) avTransport = "/$avTransport"
-            if (rendering != null && !rendering.startsWith("/")) rendering = "/$rendering"
+            val avUrl =
+                if (avTransport.startsWith("/"))
+                    base + avTransport
+                else
+                    "$base/$avTransport"
+
+            val renderingUrl =
+                rendering?.let {
+                    if (it.startsWith("/"))
+                        base + it
+                    else
+                        "$base/$it"
+                }
+
+            Log.d(TAG, "TV encontrada: $name")
+            Log.d(TAG, "AVTransport=$avUrl")
+            Log.d(TAG, "Rendering=$renderingUrl")
 
             DLNADevice(
                 name = name,
                 location = location,
-                serviceUrl = base + avTransport,
-                renderingControlUrl = rendering?.let { base + it }
+                serviceUrl = avUrl,
+                renderingControlUrl = renderingUrl
             )
+
         } catch (e: Exception) {
             Log.e(TAG, "Erro lendo device", e)
             null
@@ -241,7 +223,7 @@ object DLNADiscoveryManager {
                     }
                 }
             }
-        } catch (ignored: Exception) {
+        } catch (ignored : Exception) {
         }
         return "127.0.0.1"
     }
