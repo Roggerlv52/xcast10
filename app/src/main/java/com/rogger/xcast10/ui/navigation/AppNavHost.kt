@@ -75,11 +75,20 @@ fun AppRoot() {
                 connectedDevice = uiState.selectedDevice,
                 onNavigate = { screen ->
                     scope.launch { drawerState.close() }
-                    navController.navigate(screen.route) {
-                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
+                    if (screen == Screen.Home) {
+
+                        navController.navigate(Screen.Home.route) {
+                            popUpTo(navController.graph.id) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    } else {
+                        navController.navigate(screen.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
                     }
+
                 },
                 onDisconnect = {
                     scope.launch { drawerState.close() }

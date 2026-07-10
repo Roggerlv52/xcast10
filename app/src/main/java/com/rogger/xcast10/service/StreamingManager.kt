@@ -105,13 +105,19 @@ object StreamingManager {
 
     /**
      * Fallback confiável para "seek": em vez de depender do comando Seek nativo do DLNA
-     * (que muitas Smart TVs aceitam mas não implementam de facto), reinicia a transmissão
-     * servindo o ficheiro a partir de um offset de bytes proporcional a [positionMs].
-     * A TV recebe uma "nova" URL e começa a reproduzir a partir do ponto desejado.
+     * (que a LG webOS aceita mas não implementa de facto — retorna 200 ou ignora), gera um
+     * NOVO arquivo MP4 válido a partir do ponto pedido (via [SeekMp4Generator]/FFmpeg,
+     * começando num keyframe real) e reinicia a transmissão servindo esse arquivo.
      *
-     * ALTERADO: agora protegido pelo mesmo [mutex] de startStreaming — se já houver um
-     * seek em andamento, esta chamada aguarda ele terminar antes de derrubar o servidor,
-     * em vez de derrubá-lo no meio de uma transferência ativa com a TV.
+     * ALTERADO POR COMPLETO: a versão anterior fazia FileInputStream.skip() com um offset de
+     * bytes proporcional ao tempo — isso quebrava a estrutura do MP4 (sem ftyp/moov, sem
+     * alinhamento a keyframe) e a LG webOS respondia com HTTP 500 ao SetAVTransportURI.
+     * Agora o arquivo servido é sempre um MP4 estruturalmente correto.
+     *
+     * Continua protegido pelo mesmo [mutex] de startStreaming: uma segunda chamada (o
+     * utilizador arrastando a barra de novo) só começa depois que a anterior — geração do
+     * arquivo incluída — tiver terminado por completo. Isso também garante, por construção,
+     * que nunca existem duas gerações de arquivo temporário simultâneas.
      */
     suspend fun seekByRestarting(
         context: Context,
@@ -128,39 +134,55 @@ object StreamingManager {
         return withContext(Dispatchers.IO) {
             mutex.withLock {
                 val result: StreamingResult = try {
-                    server?.stop()
-                    val newServer = LocalHttpServer(context, PORT).apply {
-                        setVideoUri(item.uri, startPositionMs = positionMs, totalDurationMs = item.duration)
-                        start()
+                    // Gera (via FFmpeg) um MP4 novo, válido, começando em positionMs.
+                    // O próprio SeekMp4Generator apaga o temporário da chamada anterior antes
+                    // de criar o novo, então nunca há dois arquivos "vivos" ao mesmo tempo.
+                    when (val genResult = SeekMp4Generator.generate(context, item.uri, positionMs)) {
+                        is SeekFileResult.Error -> throw IllegalStateException(genResult.message)
+
+                        is SeekFileResult.Success -> {
+                            server?.stop()
+                            val newServer = LocalHttpServer(context, PORT).apply {
+                                setVideoFile(genResult.file)
+                                start()
+                            }
+                            server = newServer
+
+                            val ip = DLNADiscoveryManager.getLocalIpAddress()
+                            // Token no PATH (não query string): alguns players de TV, incluindo
+                            // a webOS, ignoram query string para fins de cache mas nunca
+                            // ignoram o path. O NanoHTTPD aqui ignora o path recebido (serve()
+                            // sempre serve o arquivo atual), então isso é seguro.
+                            val videoUrl = "http://$ip:$PORT/${System.currentTimeMillis()}.mp4"
+                            Log.d(TAG, "Seek (novo MP4 via FFmpeg) URL: $videoUrl, positionMs: $positionMs")
+
+                            val conn = URL(videoUrl).openConnection() as HttpURLConnection
+                            conn.requestMethod = "GET"
+                            conn.connectTimeout = 3000
+
+                            if (conn.responseCode != 200) {
+                                throw IllegalStateException("Servidor HTTP não respondeu corretamente")
+                            }
+
+                            DLNAControlManager.setAVTransportURI(deviceServiceUrl, videoUrl)
+
+                            // ALTERADO: removido o delay(6000) fixo que existia aqui — a
+                            // confirmação de que a TV carregou a mídia é feita inteiramente
+                            // por polling via waitForMediaReady (GetPositionInfo/TrackDuration).
+                            val ready = DLNAControlManager.waitForMediaReady(
+                                deviceServiceUrl,
+                                timeoutMs = 12_000,
+                                pollIntervalMs = 500
+                            )
+                            if (!ready) {
+                                Log.w(TAG, "TV não confirmou TrackDuration a tempo; enviando Play mesmo assim")
+                            }
+
+                            DLNAControlManager.play(deviceServiceUrl)
+
+                            StreamingResult.Success(item, deviceServiceUrl, device.renderingControlUrl)
+                        }
                     }
-                    server = newServer
-
-                    val ip = DLNADiscoveryManager.getLocalIpAddress()
-                    // ALTERADO: era "?seek=timestamp" (query string) — trocado para um token no
-                    // PATH, pois alguns players de TV (ex: webOS) ignoram query string para fins
-                    // de cache mas nunca ignoram o path. O NanoHTTPD nesta classe ignora o path
-                    // recebido (serve() sempre serve o videoUri atual), então isso é seguro.
-                    val videoUrl = "http://$ip:$PORT/${System.currentTimeMillis()}.mp4"
-                    Log.d(TAG, "Seek (restart) URL: $videoUrl, offset ms: $positionMs")
-
-                    val conn = URL(videoUrl).openConnection() as HttpURLConnection
-                    conn.requestMethod = "GET"
-                    conn.connectTimeout = 3000
-
-                    if (conn.responseCode != 200) {
-                        throw IllegalStateException("Servidor HTTP não respondeu corretamente")
-                    }
-                    DLNAControlManager.setAVTransportURI(deviceServiceUrl, videoUrl)
-
-                    // ALTERADO: era "delay(1200)" fixo — agora aguarda ativamente (polling) a TV
-                    // confirmar a nova duração. Timeout menor que no startStreaming, pois a TV
-                    // já está "quente" (já tinha um vídeo a tocar antes deste seek).
-                    delay(6000)
-                    DLNAControlManager.waitForMediaReady(deviceServiceUrl, timeoutMs = 8_000, pollIntervalMs = 500)
-
-                    DLNAControlManager.play(deviceServiceUrl)
-
-                    StreamingResult.Success(item, deviceServiceUrl, device.renderingControlUrl)
                 } catch (e: Exception) {
                     StreamingResult.Error("Erro ao avançar o vídeo: ${e.message}")
                 }
@@ -169,10 +191,13 @@ object StreamingManager {
         }
     }
 
-    fun stopServer() {
+    fun stopServer(context: Context? = null) {
         server?.stop()
         server = null
+        // Limpa o temporário de seek ao encerrar a transmissão, já que ele deixa de ter uso.
+        context?.let { SeekMp4Generator.deleteTemp(it) }
     }
 
     private const val TAG = "StreamingManager"
 }
+

@@ -14,7 +14,9 @@ import android.os.PowerManager
 import android.util.Log
 import android.webkit.MimeTypeMap
 import fi.iki.elonen.NanoHTTPD
+import java.io.File
 import java.io.FileInputStream
+import java.io.InputStream
 
 /**
  * Servidor HTTP local baseado no NanoHTTPD.
@@ -27,9 +29,11 @@ class LocalHttpServer(
     port: Int
 ) : NanoHTTPD(port) {
 
+    // ALTERADO: era Uri + startPositionMs + totalDurationMs. Agora o servidor serve OU o Uri
+    // original (setVideoUri) OU um File já pronto (setVideoFile) — nunca os dois ao mesmo tempo.
     private var videoUri: Uri? = null
-    private var startPositionMs: Long = 0
-    private var totalDurationMs: Long = 0
+    private var videoFile: File? = null
+
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
@@ -61,76 +65,44 @@ class LocalHttpServer(
         wifiLock?.let { if (it.isHeld) it.release() }
     }
 
-    /**
-     * @param startPositionMs ponto (em milissegundos) a partir do qual o vídeo deve começar a ser
-     * servido. Usado para simular um "seek" reiniciando a transmissão a partir de um offset de bytes,
-     * já que o comando DLNA Seek nativo não é confiável em muitas Smart TVs.
-     * @param totalDurationMs duração total do vídeo, usada para calcular o offset proporcional.
-     */
-    fun setVideoUri(uri: Uri, startPositionMs: Long = 0, totalDurationMs: Long = 0) {
+    /** Serve o vídeo original (MediaStore/SAF). Usado no play inicial (startStreaming). */
+    fun setVideoUri(uri: Uri) {
         this.videoUri = uri
-        this.startPositionMs = startPositionMs
-        this.totalDurationMs = totalDurationMs
+        this.videoFile = null
+    }
+
+    /**
+     * Serve um arquivo já pronto no disco — usado para o fallback de seek, com o arquivo
+     * gerado pelo [SeekMp4Generator] (já recortado corretamente, começando num keyframe).
+     */
+    fun setVideoFile(file: File) {
+        this.videoFile = file
+        this.videoUri = null
     }
 
     override fun serve(session: IHTTPSession): Response {
-        try {
-            val uri = videoUri
+        return try {
+            val (stream, fileSize, mimeSource) = openSource()
                 ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "No video")
 
-            val pfd: ParcelFileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
-                ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "File not found")
-
-            val realFileSize = pfd.statSize
-            /*
-           val byteOffset = if (totalDurationMs > 0 && startPositionMs > 0) {
-               ((startPositionMs.toDouble() / totalDurationMs) * realFileSize).toLong()
-                    .coerceIn(0, realFileSize - 1)
-            } else 0L
-             */
-
-            val fis = FileInputStream(pfd.fileDescriptor)
-            val byteOffset = when {
-                session.headers["range"] != null -> {
-                    val range = session.headers["range"]!!
-                    range.substringAfter("bytes=")
-                        .substringBefore("-")
-                        .toLongOrNull() ?: 0L
-                }
-                else -> 0L
-            }
-            if (byteOffset > 0) //fis.skip(byteOffset)
-                fis.channel.position(byteOffset)
-            val fileSize = realFileSize - byteOffset // tamanho "virtual" a partir do offset
-            val mime = getMimeType(uri.toString())
-
+            val mime = getMimeType(mimeSource)
             val range = session.headers["range"]
-
-            var start = 0L
-            var end = fileSize - 1
 
             if (range != null && range.startsWith("bytes=")) {
                 try {
                     val parts = range.substring("bytes=".length).split("-")
-                    start = parts[0].toLong()
-                    if (parts.size > 1 && parts[1].isNotEmpty()) end = parts[1].toLong()
+                    val start = parts[0].toLongOrNull() ?: 0L
+                    var end = if (parts.size > 1 && parts[1].isNotEmpty()) parts[1].toLong() else fileSize - 1
                     if (end >= fileSize) end = fileSize - 1
+                    val contentLength = (end - start + 1).coerceAtLeast(0)
 
-                    val contentLength = end - start + 1
-                    fis.skip(start) // relativo ao offset já aplicado acima
+                    if (start > 0) stream.skip(start)
 
-                    val res = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mime, fis, contentLength)
-                    /*
-                    res.addHeader("Accept-Ranges", "bytes")
-                    res.addHeader("Content-Range", "bytes $start-$end/$fileSize")
-                    res.addHeader("Content-Length", contentLength.toString())
-                    res.addHeader("Connection", "close")
-                    res.addHeader("Cache-Control", "no-cache")
-                    */
+                    val res = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mime, stream, contentLength)
                     res.addHeader("Content-Type", mime)
                     res.addHeader("Accept-Ranges", "bytes")
+                    res.addHeader("Content-Range", "bytes $start-$end/$fileSize")
                     res.addHeader("Connection", "keep-alive")
-                    res.addHeader("Transfer-Encoding", "identity")
                     res.addHeader("Content-Length", contentLength.toString())
                     return res
                 } catch (e: Exception) {
@@ -138,26 +110,40 @@ class LocalHttpServer(
                 }
             }
 
-            val res = newFixedLengthResponse(Response.Status.OK, mime, fis, fileSize)
-
-            /*res.addHeader("Accept-Ranges", "bytes")
-            res.addHeader("Content-Length", fileSize.toString())
-            res.addHeader("Connection", "close")
-            res.addHeader("Cache-Control", "no-cache")
-            */
+            val res = newFixedLengthResponse(Response.Status.OK, mime, stream, fileSize)
             res.addHeader("Content-Type", mime)
             res.addHeader("Accept-Ranges", "bytes")
             res.addHeader("Connection", "keep-alive")
-            res.addHeader("Transfer-Encoding", "identity")
             res.addHeader("Content-Length", fileSize.toString())
-
-            return res
+            res
 
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao servir vídeo", e)
+            newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Server error")
+        }
+    }
+
+    /**
+     * Abre o stream de leitura correto (arquivo recortado tem prioridade sobre o Uri original,
+     * já que só um dos dois é definido de cada vez por setVideoUri/setVideoFile) e retorna
+     * junto o tamanho total e a "fonte" usada só para deduzir o MIME type.
+     */
+    private fun openSource(): Triple<InputStream, Long, String>? {
+        videoFile?.let { file ->
+            if (!file.exists()) {
+                Log.e(TAG, "Arquivo de vídeo recortado não existe mais: ${file.absolutePath}")
+                return null
+            }
+            return Triple(FileInputStream(file), file.length(), file.name)
         }
 
-        return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Server error")
+        videoUri?.let { uri ->
+            val pfd: ParcelFileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
+                ?: return null
+            return Triple(FileInputStream(pfd.fileDescriptor), pfd.statSize, uri.toString())
+        }
+
+        return null
     }
 
     private fun getMimeType(url: String): String {
@@ -168,6 +154,7 @@ class LocalHttpServer(
         }
         return "video/mp4"
     }
+
     companion object {
         private const val TAG = "LocalHttpServer"
     }

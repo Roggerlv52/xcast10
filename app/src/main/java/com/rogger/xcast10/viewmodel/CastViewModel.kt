@@ -6,7 +6,6 @@ package com.rogger.xcast10.viewmodel
  * Hora: 12:26
  */
 
-// ALTERADO: removido "import com.rogger.xcast10.util.TimeFormatter" (não é mais usado — seekTo não monta mais o REL_TIME)
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -281,7 +280,9 @@ class CastViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Log.e(TAG, "Erro ao parar transmissão", e)
             } finally {
-                StreamingManager.stopServer()
+                // ALTERADO: passa o context para que o temporário de seek gerado via FFmpeg
+                // (se existir) seja apagado ao encerrar a transmissão.
+                StreamingManager.stopServer(getApplication())
                 progressJob?.cancel()
                 _uiState.value = _uiState.value.copy(playback = PlaybackState())
                 _events.emit(CastEvent.StreamingStopped)

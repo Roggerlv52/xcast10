@@ -70,4 +70,5 @@ dependencies {
 
     // NanoHTTPD para servir os vídeos locais via HTTP para a TV
     implementation(libs.nanohttpd)
+    implementation(libs.ffmpeg.kit.min.gpl)
 }
